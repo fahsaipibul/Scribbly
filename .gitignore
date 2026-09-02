@@ -1,0 +1,10 @@
+node_modules
+dist
+.next
+.vinext
+.wrangler
+.dev.vars
+.env
+.env.local
+.DS_Store
+*.log
