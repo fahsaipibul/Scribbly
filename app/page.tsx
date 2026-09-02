@@ -9,6 +9,7 @@ import {
 
 type Point = { x: number; y: number };
 type Stroke = { points: Point[]; color: string; width: number };
+type TextBox = { id: number; x: number; y: number; text: string };
 
 type NotePage = { id: number; label: string; tone: string; compiled?: boolean };
 
@@ -20,10 +21,12 @@ const starterPages: NotePage[] = [
 
 export default function Home() {
   const svgRef = useRef<SVGSVGElement>(null);
+  const paperRef = useRef<HTMLElement>(null);
   const [pages, setPages] = useState<NotePage[]>(starterPages);
   const [activeId, setActiveId] = useState(1);
   const [tool, setTool] = useState('pen');
   const [strokesByPage, setStrokesByPage] = useState<Record<number, Stroke[]>>({});
+  const [textByPage, setTextByPage] = useState<Record<number, TextBox[]>>({});
   const [draft, setDraft] = useState<Stroke | null>(null);
   const [notice, setNotice] = useState('');
   const activePage = pages.find((page) => page.id === activeId) ?? pages[0];
@@ -33,15 +36,16 @@ export default function Home() {
     try {
       const saved = localStorage.getItem('scribbly-notebook');
       if (!saved) return;
-      const notebook = JSON.parse(saved) as { pages: NotePage[]; strokes: Record<number, Stroke[]> };
+      const notebook = JSON.parse(saved) as { pages: NotePage[]; strokes: Record<number, Stroke[]>; text?: Record<number, TextBox[]> };
       if (notebook.pages?.length) setPages(notebook.pages);
       if (notebook.strokes) setStrokesByPage(notebook.strokes);
+      if (notebook.text) setTextByPage(notebook.text);
     } catch { /* keep the friendly starter notebook */ }
   }, []);
 
   useEffect(() => {
-    localStorage.setItem('scribbly-notebook', JSON.stringify({ pages, strokes: strokesByPage }));
-  }, [pages, strokesByPage]);
+    localStorage.setItem('scribbly-notebook', JSON.stringify({ pages, strokes: strokesByPage, text: textByPage }));
+  }, [pages, strokesByPage, textByPage]);
 
   useEffect(() => {
     const context = (document as Document & { modelContext?: { registerTool: (tool: object, options?: { signal?: AbortSignal }) => void | Promise<void> } }).modelContext;
@@ -67,6 +71,11 @@ export default function Home() {
   }
 
   function startStroke(event: React.PointerEvent<SVGSVGElement>) {
+    if (tool === 'eraser') {
+      event.currentTarget.setPointerCapture(event.pointerId);
+      eraseAt(point(event));
+      return;
+    }
     if (tool !== 'pen' && tool !== 'highlighter') return;
     event.currentTarget.setPointerCapture(event.pointerId);
     setDraft({
@@ -77,6 +86,10 @@ export default function Home() {
   }
 
   function moveStroke(event: React.PointerEvent<SVGSVGElement>) {
+    if (tool === 'eraser') {
+      eraseAt(point(event));
+      return;
+    }
     if (!draft) return;
     setDraft({ ...draft, points: [...draft.points, point(event)] });
   }
@@ -91,10 +104,33 @@ export default function Home() {
     setStrokesByPage((current) => ({ ...current, [activeId]: (current[activeId] ?? []).slice(0, -1) }));
   }
 
-  function clearInk() {
-    setStrokesByPage((current) => ({ ...current, [activeId]: [] }));
-    setNotice('Ink cleared');
-    window.setTimeout(() => setNotice(''), 1400);
+  function eraseAt(cursor: Point) {
+    setStrokesByPage((current) => ({
+      ...current,
+      [activeId]: (current[activeId] ?? []).filter((stroke) =>
+        !stroke.points.some((sample) => Math.hypot(sample.x - cursor.x, sample.y - cursor.y) < stroke.width / 2 + 11)
+      ),
+    }));
+  }
+
+  function renameActive(label: string) {
+    setPages((current) => current.map((page) => page.id === activeId ? { ...page, label } : page));
+  }
+
+  function finishRename(label: string) {
+    renameActive(label.trim() || 'Untitled page');
+  }
+
+  function addText(event: React.MouseEvent<HTMLElement>) {
+    if (tool !== 'text' || !paperRef.current) return;
+    const rect = paperRef.current.getBoundingClientRect();
+    const item = { id: Date.now(), x: event.clientX - rect.left, y: event.clientY - rect.top, text: 'Type here' };
+    setTextByPage((current) => ({ ...current, [activeId]: [...(current[activeId] ?? []), item] }));
+    setTool('select');
+  }
+
+  function editText(id: number, text: string) {
+    setTextByPage((current) => ({ ...current, [activeId]: (current[activeId] ?? []).map((item) => item.id === id ? { ...item, text } : item) }));
   }
 
   function addPage() {
@@ -167,7 +203,7 @@ export default function Home() {
 
         <section className="editor-area">
           <div className="editor-header">
-            <div><span className="crumb">Calculus I / Chapter 2</span><h1>{activePage?.label}</h1></div>
+            <div><span className="crumb">Calculus I / Chapter 2</span><input className="editable-page-title" value={activePage?.label ?? ''} onChange={(event) => renameActive(event.target.value)} onBlur={(event) => finishRename(event.target.value)} aria-label="Page title" /></div>
             <div className="save-state"><span />Saved just now</div>
           </div>
 
@@ -177,7 +213,7 @@ export default function Home() {
             <span className="tool-divider" />
             <ToolButton label="Pen" active={tool === 'pen'} onClick={() => setTool('pen')}><PenLine /></ToolButton>
             <ToolButton label="Highlight" active={tool === 'highlighter'} onClick={() => setTool('highlighter')}><Highlighter /></ToolButton>
-            <ToolButton label="Eraser" active={false} onClick={clearInk}><Eraser /></ToolButton>
+            <ToolButton label="Eraser" active={tool === 'eraser'} onClick={() => setTool('eraser')}><Eraser /></ToolButton>
             <ToolButton label="Text" active={tool === 'text'} onClick={() => setTool('text')}><Type /></ToolButton>
             <ToolButton label="Image" active={false} onClick={() => {}}><ImagePlus /></ToolButton>
             <span className="tool-divider" />
@@ -186,15 +222,15 @@ export default function Home() {
             <span className="toolbar-spacer" />
             <button className="icon-button compact" aria-label="Undo" onClick={undo}><Undo2 /></button>
             <button className="icon-button compact" aria-label="Redo" disabled><Redo2 /></button>
-            <button className="compile-button" onClick={compileFormulaSheet}><Sparkles />Compile formulas</button>
+            <button className="compile-button" onClick={compileFormulaSheet}><Sparkles />Compile formulas <span>Demo</span></button>
           </div>
 
           <div className="desk">
-            <article className="paper squared-paper">
+            <article ref={paperRef} className={`paper squared-paper paper-tool-${tool}`} onClick={addText}>
               {activePage?.compiled ? <CompiledSheet /> : (
                 <div className="paper-content">
                   <p className="hand date">September 2</p>
-                  <h2 className="hand">{activePage?.label}</h2>
+                  <h2 className="hand editable-paper-title" contentEditable suppressContentEditableWarning onBlur={(event) => finishRename(event.currentTarget.textContent ?? '')}>{activePage?.label}</h2>
                   <div className="hand underline" />
                   {activeId === 1 ? <>
                     <p className="hand note">A limit describes the value a function approaches<br />as the input gets closer to some value.</p>
@@ -204,6 +240,18 @@ export default function Home() {
                   </> : <p className="hand empty-hint">Pick up the pen and make this page yours.</p>}
                 </div>
               )}
+              {(textByPage[activeId] ?? []).map((item) => (
+                <div
+                  key={item.id}
+                  className="canvas-text"
+                  style={{ left: item.x, top: item.y }}
+                  contentEditable
+                  suppressContentEditableWarning
+                  onPointerDown={(event) => event.stopPropagation()}
+                  onClick={(event) => event.stopPropagation()}
+                  onBlur={(event) => editText(item.id, event.currentTarget.textContent ?? '')}
+                >{item.text}</div>
+              ))}
               <svg
                 ref={svgRef}
                 className={`ink-layer tool-${tool}`}
@@ -226,21 +274,36 @@ export default function Home() {
 }
 
 function CompiledSheet() {
-  const [items, setItems] = useState([
+  const starterItems = [
     { id: 1, label: 'Limit definition', formula: 'limₓ→ₐ f(x) = L', note: 'The value f(x) approaches as x approaches a.' },
     { id: 2, label: 'Difference of squares', formula: 'x² − a² = (x − a)(x + a)', note: 'Useful for simplifying limits before substitution.' },
     { id: 3, label: 'Power rule', formula: 'd/dx [xⁿ] = nxⁿ⁻¹', note: 'Multiply by the exponent, then subtract one.' },
-  ]);
+  ];
+  const [items, setItems] = useState(starterItems);
+  const [sheetTitle, setSheetTitle] = useState('My formula sheet');
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('scribbly-compiled-sheet');
+      if (!saved) return;
+      const parsed = JSON.parse(saved) as { title?: string; items?: typeof starterItems };
+      if (parsed.title) setSheetTitle(parsed.title);
+      if (parsed.items) setItems(parsed.items);
+    } catch { /* keep the sample compilation */ }
+  }, []);
+  useEffect(() => { localStorage.setItem('scribbly-compiled-sheet', JSON.stringify({ title: sheetTitle, items })); }, [items, sheetTitle]);
+  function editItem(id: number, field: 'label' | 'formula' | 'note', value: string) {
+    setItems((all) => all.map((item) => item.id === id ? { ...item, [field]: value } : item));
+  }
   return <div className="compiled-sheet">
-    <div className="compiled-kicker"><Sparkles />Compiled from Calculus I</div>
-    <h2 contentEditable suppressContentEditableWarning>My formula sheet</h2>
+    <div className="compiled-kicker"><Sparkles />Demo compilation · Calculus I</div>
+    <h2 contentEditable suppressContentEditableWarning onBlur={(event) => setSheetTitle(event.currentTarget.textContent || 'Formula sheet')}>{sheetTitle}</h2>
     <p className="compiled-help">Everything here is editable. Click into any text, or remove a card and rewrite it with the pen.</p>
     <div className="formula-grid">
-      {items.map((item) => <section className="compiled-card" draggable key={item.id}>
+      {items.map((item) => <section className="compiled-card" key={item.id}>
         <button className="remove-card" onClick={() => setItems((all) => all.filter((entry) => entry.id !== item.id))} aria-label={`Remove ${item.label}`}>×</button>
-        <small contentEditable suppressContentEditableWarning>{item.label}</small>
-        <strong contentEditable suppressContentEditableWarning>{item.formula}</strong>
-        <p contentEditable suppressContentEditableWarning>{item.note}</p>
+        <small contentEditable suppressContentEditableWarning onBlur={(event) => editItem(item.id, 'label', event.currentTarget.textContent ?? '')}>{item.label}</small>
+        <strong contentEditable suppressContentEditableWarning onBlur={(event) => editItem(item.id, 'formula', event.currentTarget.textContent ?? '')}>{item.formula}</strong>
+        <p contentEditable suppressContentEditableWarning onBlur={(event) => editItem(item.id, 'note', event.currentTarget.textContent ?? '')}>{item.note}</p>
         <span className="source-link">↗ Page {item.id}</span>
       </section>)}
     </div>
