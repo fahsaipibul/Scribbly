@@ -89,3 +89,24 @@ export function createCompiledInk(kind: string): InkStroke[] {
   }
   return result;
 }
+
+export type CompilationSection = { heading: string; lines: string[]; sourcePageIds: number[] };
+
+export function createAICompiledInk(title: string, sections: CompilationSection[]): InkStroke[] {
+  const result: InkStroke[] = [];
+  let y = 64;
+  result.push(...writeInk(title || 'SCRIBBLY STUDY SHEET', 62, y, 3.8, '#24322f', 2.7, 620));
+  y += 72;
+  for (const section of sections.slice(0, 8)) {
+    result.push(...writeInk(section.heading, 64, y, 3, '#d76552', 2.3, 590));
+    y += 48;
+    for (const line of section.lines.slice(0, 8)) {
+      result.push(...writeInk(line, 78, y, 2.45, '#24322f', 2, 570));
+      y += 34 * Math.max(1, Math.ceil(line.length / 38));
+      if (y > 930) break;
+    }
+    y += 24;
+    if (y > 930) break;
+  }
+  return result;
+}

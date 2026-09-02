@@ -6,7 +6,7 @@ import {
   Highlighter, ImagePlus, LassoSelect, Menu, MousePointer2, PenLine,
   Plus, Redo2, Search, Sparkles, Trash2, Type, Undo2,
 } from 'lucide-react';
-import { createCompiledInk } from '@/lib/handwriting';
+import { createAICompiledInk, createCompiledInk, type CompilationSection } from '@/lib/handwriting';
 
 type Point = { x: number; y: number };
 type Stroke = { points: Point[]; color: string; width: number };
@@ -49,6 +49,8 @@ export default function Home() {
   const [compileOpen, setCompileOpen] = useState(false);
   const [compileKind, setCompileKind] = useState('formulas');
   const [compileRequest, setCompileRequest] = useState('');
+  const [compileBusy, setCompileBusy] = useState(false);
+  const [compileError, setCompileError] = useState('');
   const [compiledSources, setCompiledSources] = useState<Record<number, Array<{ pageId:number; label:string }>>>({});
 
   const activeNotebook = notebooks.find((book) => book.id === activeNotebookId) ?? notebooks[0];
@@ -85,7 +87,7 @@ export default function Home() {
       description: 'Create or open an editable demo formula sheet inside the current Scribbly notebook.',
       inputSchema: { type: 'object', properties: {}, additionalProperties: false },
       annotations: { readOnlyHint: false, untrustedContentHint: false },
-      execute: async () => { runCompilation('formulas'); return { status: 'created', notebook: activeNotebook.name, page: 'Formula sheet' }; },
+      execute: async () => { await runCompilation('Compile all formulas in this notebook'); return { status: 'created', notebook: activeNotebook.name, page: 'Formula sheet' }; },
     }, { signal: lifecycle.signal })).catch(() => {});
     return () => lifecycle.abort();
   }, [notebooks, activeNotebookId]);
@@ -210,22 +212,65 @@ export default function Home() {
     const next = pages.filter((item) => item.id !== id); updatePages(() => next); if (activeId === id) setActiveId(next[0].id); showNotice('Page deleted');
   }
 
-  function runCompilation(request: string) {
+  function pageSnapshot(pageId: number, label: string) {
+    const canvas = document.createElement('canvas');
+    canvas.width = 900; canvas.height = 1050;
+    const context = canvas.getContext('2d')!;
+    context.fillStyle = '#fffefb'; context.fillRect(0, 0, canvas.width, canvas.height);
+    context.fillStyle = '#24322f'; context.font = 'bold 28px sans-serif'; context.fillText(label, 48, 52);
+    for (const item of textByPage[pageId] ?? []) {
+      context.font = '22px sans-serif'; context.fillText(item.text, item.x, item.y);
+    }
+    context.lineCap = 'round'; context.lineJoin = 'round';
+    for (const stroke of strokesByPage[pageId] ?? []) {
+      if (!stroke.points.length) continue;
+      context.beginPath(); context.moveTo(stroke.points[0].x, stroke.points[0].y);
+      stroke.points.slice(1).forEach((sample) => context.lineTo(sample.x, sample.y));
+      context.strokeStyle = stroke.color; context.lineWidth = stroke.width; context.globalAlpha = stroke.width > 10 ? .45 : 1; context.stroke();
+    }
+    context.globalAlpha = 1;
+    return canvas.toDataURL('image/png');
+  }
+
+  async function runCompilation(request: string) {
+    if (compileBusy) return;
+    setCompileBusy(true); setCompileError('');
+    const sourcePages = pages.filter((page) => (strokesByPage[page.id] ?? []).length > 0 || (textByPage[page.id] ?? []).length > 0);
+    if (!sourcePages.length) {
+      setCompileError('Write or type something in this notebook first.'); setCompileBusy(false); return;
+    }
+    try {
+      const response = await fetch('/api/compile', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ request, notebook: activeNotebook.name, pages: sourcePages.slice(0, 8).map((page) => ({ id: page.id, label: page.label, image: pageSnapshot(page.id, page.label) })) }),
+      });
+      const result = await response.json() as { title?: string; sections?: CompilationSection[]; error?: string };
+      if (!response.ok || !result.title || !result.sections?.length) throw new Error(result.error || 'Scribbly could not compile these notes.');
+      finishCompilation(result.title, result.sections, sourcePages);
+    } catch (error) {
+      setCompileError(error instanceof Error ? error.message : 'Scribbly could not compile these notes.');
+    } finally { setCompileBusy(false); }
+  }
+
+  function finishCompilation(title: string, sections: CompilationSection[], sourcePages: NotePage[]) {
     const id = Date.now();
-    const lower = request.toLowerCase();
-    const label = lower.includes('example') ? 'Example booklet' : lower.includes('definition') ? 'Definitions sheet' : 'Compiled study sheet';
-    const generated = createCompiledInk(request);
-    const sourcePages = pages.filter((page) => (strokesByPage[page.id] ?? []).length > 0);
+    const label = title.slice(0, 60) || 'Compiled study sheet';
+    const generated = createAICompiledInk(title, sections);
+    const referencedIds = new Set(sections.flatMap((section) => section.sourcePageIds));
+    const referencedPages = sourcePages.filter((page) => referencedIds.has(page.id));
     const copied: Stroke[] = [];
-    if (sourcePages.length) {
-      const original = strokesByPage[sourcePages[0].id] ?? [];
+    const copyPage = referencedPages[0];
+    if (copyPage) {
+      const original = strokesByPage[copyPage.id] ?? [];
       const points = original.flatMap((stroke) => stroke.points);
-      const minX = Math.min(...points.map((p) => p.x)), minY = Math.min(...points.map((p) => p.y));
-      original.forEach((stroke) => copied.push({ ...stroke, points: stroke.points.map((p) => ({ x:72+(p.x-minX)*.55, y:760+(p.y-minY)*.55 })), width:Math.max(1.2,stroke.width*.7) }));
+      if (points.length) {
+        const minX = Math.min(...points.map((p) => p.x)), minY = Math.min(...points.map((p) => p.y));
+        original.forEach((stroke) => copied.push({ ...stroke, points: stroke.points.map((p) => ({ x:72+(p.x-minX)*.45, y:790+(p.y-minY)*.45 })), width:Math.max(1.2,stroke.width*.62) }));
+      }
     }
     updatePages((current) => [...current, { id, label, tone:'formula', compiled:true }]);
     setStrokesByPage((current) => ({ ...current, [id]:[...generated,...copied] }));
-    setCompiledSources((current) => ({ ...current, [id]:(sourcePages.length?sourcePages:pages.slice(0,1)).map((page)=>({pageId:page.id,label:page.label})) }));
+    setCompiledSources((current) => ({ ...current, [id]:(referencedPages.length?referencedPages:sourcePages).map((page)=>({pageId:page.id,label:page.label})) }));
     setActiveId(id); setTool('pen'); setView('notebook'); setCompileOpen(false); showNotice('Handwritten compilation created');
   }
 
@@ -270,7 +315,7 @@ export default function Home() {
           <span className="tool-divider" />
           <ToolButton label="Pen" active={tool === 'pen'} onClick={() => setTool('pen')}><PenLine /></ToolButton><ToolButton label="Highlight" active={tool === 'highlighter'} onClick={() => setTool('highlighter')}><Highlighter /></ToolButton><ToolButton label="Eraser" active={tool === 'eraser'} onClick={() => setTool('eraser')}><Eraser /></ToolButton><ToolButton label="Text" active={tool === 'text'} onClick={() => setTool('text')}><Type /></ToolButton><ToolButton label="Image" active={false} onClick={() => {}}><ImagePlus /></ToolButton>
           <span className="tool-divider" /><button className="color-dot" aria-label="Ink color" /><button className="weight-button" aria-label="Pen size"><span /></button><span className="toolbar-spacer" />
-          <button className="icon-button compact" aria-label="Undo" onClick={undo}><Undo2 /></button><button className="icon-button compact" aria-label="Redo" disabled><Redo2 /></button><button className="compile-button" onClick={() => setCompileOpen(true)}><Sparkles />Compile <span>Stroke demo</span></button>
+          <button className="icon-button compact" aria-label="Undo" onClick={undo}><Undo2 /></button><button className="icon-button compact" aria-label="Redo" disabled><Redo2 /></button><button className="compile-button" onClick={() => { setCompileError(''); setCompileOpen(true); }}><Sparkles />Compile <span>AI</span></button>
         </div>
         <div className="desk"><article ref={paperRef} className={`paper squared-paper paper-tool-${tool}`} onClick={addText}>
           {!activePage?.compiled && <div className="paper-content"><p className="hand date">September 2</p><h2 className="hand editable-paper-title" contentEditable suppressContentEditableWarning onBlur={(event) => finishRename(event.currentTarget.textContent ?? '')}>{activePage?.label}</h2><div className="hand underline" />{activeId === 1 ? <><p className="hand note">A limit describes the value a function approaches<br />as the input gets closer to some value.</p><div className="formula-card hand"><span className="formula-label">Definition</span><strong>lim&nbsp; f(x) = L</strong><small>x → a</small></div><p className="hand ex"><b>EX</b>&nbsp;&nbsp; Find the limit:</p><p className="hand equation">lim&nbsp; (x² − 4) / (x − 2) = 4</p></> : <p className="hand empty-hint">Pick up the pen and make this page yours.</p>}</div>}
@@ -283,7 +328,7 @@ export default function Home() {
           </svg>
         </article></div>
       </section>}
-    </div>{compileOpen && <div className="compile-overlay" role="dialog" aria-modal="true" aria-label="Compile notebook"><div className="compile-dialog"><div className="compile-dialog-icon"><Sparkles /></div><h2>What would you like to compile?</h2><p>Scribbly will create a new page using native, erasable pen strokes.</p><div className="compile-options">{['formulas','examples','definitions','custom'].map((kind)=><button key={kind} className={compileKind===kind?'active':''} onClick={()=>setCompileKind(kind)}>{kind}</button>)}</div>{compileKind==='custom'&&<textarea value={compileRequest} onChange={(event)=>setCompileRequest(event.target.value)} placeholder="e.g. Formulas with one example beneath each" autoFocus />}<div className="compile-actions"><button onClick={()=>setCompileOpen(false)}>Cancel</button><button className="create-compilation" onClick={()=>runCompilation(compileKind==='custom'?`custom ${compileRequest}`:compileKind)}><Sparkles />Create handwritten sheet</button></div></div></div>}{notice && <div className="toast-notice" role="status">{notice}</div>}
+    </div>{compileOpen && <div className="compile-overlay" role="dialog" aria-modal="true" aria-label="Compile notebook"><div className="compile-dialog"><div className="compile-dialog-icon"><Sparkles /></div><h2>What would you like to compile?</h2><p>Scribbly will read your notes and create a new page using native, erasable pen strokes.</p><div className="compile-options">{['formulas','examples','definitions','custom'].map((kind)=><button disabled={compileBusy} key={kind} className={compileKind===kind?'active':''} onClick={()=>setCompileKind(kind)}>{kind}</button>)}</div>{compileKind==='custom'&&<textarea disabled={compileBusy} value={compileRequest} onChange={(event)=>setCompileRequest(event.target.value)} placeholder="e.g. Formulas with one example beneath each" autoFocus />}{compileError&&<p className="compile-error" role="alert">{compileError}</p>}<div className="compile-actions"><button disabled={compileBusy} onClick={()=>setCompileOpen(false)}>Cancel</button><button disabled={compileBusy || (compileKind==='custom'&&!compileRequest.trim())} className="create-compilation" onClick={()=>runCompilation(compileKind==='custom'?compileRequest:`Compile all ${compileKind} in this notebook`)}><Sparkles />{compileBusy?'Reading your notes…':'Create handwritten sheet'}</button></div></div></div>}{notice && <div className="toast-notice" role="status">{notice}</div>}
   </main>;
 }
 
