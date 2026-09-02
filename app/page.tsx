@@ -50,7 +50,6 @@ export default function Home() {
   const pages = activeNotebook?.pages ?? [];
   const activePage = pages.find((page) => page.id === activeId) ?? pages[0];
   const strokes = strokesByPage[activeId] ?? [];
-  const allPages = notebooks.flatMap((book) => book.pages.map((page) => ({ ...page, notebookId: book.id, notebookName: book.name })));
 
   useEffect(() => {
     try {
@@ -113,6 +112,11 @@ export default function Home() {
   }
 
   function moveStroke(event: React.PointerEvent<SVGSVGElement>) {
+    if (event.buttons === 0) {
+      setDragOrigin(null);
+      setLasso([]);
+      return;
+    }
     const cursor = point(event);
     if (tool === 'eraser') { eraseAt(cursor); return; }
     if (tool === 'lasso' && dragOrigin && selection.length) {
@@ -125,7 +129,7 @@ export default function Home() {
     if (draft) setDraft({ ...draft, points: [...draft.points, cursor] });
   }
 
-  function endStroke() {
+  function endStroke(event: React.PointerEvent<SVGSVGElement>) {
     if (draft) {
       setStrokesByPage((current) => ({ ...current, [activeId]: [...(current[activeId] ?? []), draft] }));
       setDraft(null);
@@ -133,10 +137,12 @@ export default function Home() {
     if (lasso.length > 2) {
       const bounds = boundsFor(lasso);
       const selected = strokes.map((stroke, index) => stroke.points.some((sample) => inBounds(sample, bounds)) ? index : -1).filter((index) => index >= 0);
-      setSelection(selected); setSelectionBounds(selected.length ? bounds : null); setLasso([]);
+      setSelection(selected); setSelectionBounds(selected.length ? bounds : null);
       if (!selected.length) showNotice('No ink inside the lasso');
     }
+    setLasso([]);
     setDragOrigin(null);
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
   }
 
   function eraseAt(cursor: Point) {
@@ -213,7 +219,7 @@ export default function Home() {
       <aside className="library-sidebar">
         <div className="sidebar-label">Library</div>
         <nav>
-          <button className={`nav-row ${view === 'all' ? 'active' : ''}`} onClick={() => setView('all')}><Grid2X2 />All notes <span>{allPages.length}</span></button>
+          <button className={`nav-row ${view === 'all' ? 'active' : ''}`} onClick={() => setView('all')}><Grid2X2 />All notes <span>{notebooks.length}</span></button>
           <button className={`nav-row ${view === 'folders' ? 'active' : ''}`} onClick={() => setView('folders')}><Folder />Folders <span>{new Set(notebooks.map((book) => book.folder)).size}</span></button>
         </nav>
         <div className="sidebar-heading"><span>Notebooks</span><button aria-label="New notebook" onClick={addNotebook}><Plus /></button></div>
@@ -225,20 +231,14 @@ export default function Home() {
       </aside>
 
       <aside className="page-sidebar">
-        <div className="page-heading"><div><span>{view === 'all' ? 'All notes' : view === 'folders' ? 'Folders' : 'Pages'}</span><strong>{view === 'all' ? `${allPages.length} pages` : view === 'folders' ? 'Organized spaces' : `${pages.length} pages`}</strong></div>{view === 'notebook' && <button aria-label="Add page" onClick={addPage}><Plus /></button>}</div>
+        <div className="page-heading"><div><span>{view === 'all' ? 'All notes' : view === 'folders' ? 'Folders' : 'Pages'}</span><strong>{view === 'all' ? `${notebooks.length} notebooks` : view === 'folders' ? 'Organized spaces' : `${pages.length} pages`}</strong></div>{view === 'notebook' && <button aria-label="Add page" onClick={addPage}><Plus /></button>}</div>
         {view === 'folders' ? <FolderList notebooks={notebooks} onOpen={openNotebook} /> : <div className="page-list">
-          {(view === 'all' ? allPages : pages).map((page) => {
-            const notebookId = 'notebookId' in page ? page.notebookId : activeNotebookId;
-            return <div className={`page-card ${page.id === activeId && view === 'notebook' ? 'selected' : ''}`} key={page.id}>
-              <button className="page-card-main" onClick={() => openNotebook(notebookId, page.id)}><span className={`page-preview ${page.tone}`}><span className="preview-line wide" /><span className="preview-line" /><span className="preview-equation">f(x) → L</span></span><span className="page-copy"><strong>{page.label}</strong><small>{view === 'all' && 'notebookName' in page ? page.notebookName : `Page ${pages.findIndex((p) => p.id === page.id) + 1}`}</small></span></button>
-              {view === 'notebook' && <button className="row-delete page-delete" aria-label={`Delete ${page.label}`} onClick={() => deletePage(page.id)}><Trash2 /></button>}
-            </div>;
-          })}
+          {view === 'all' ? notebooks.map((book) => <div className="page-card" key={book.id}><button className="page-card-main" onClick={() => openNotebook(book.id)}><span className={`page-preview ${book.pages[0]?.tone ?? 'mint'} notebook-cover`}><span className={`notebook-spine ${book.color}`} /><span className="preview-line wide" /><span className="preview-line" /></span><span className="page-copy"><strong>{book.name}</strong><small>{book.pages.length} pages · {book.folder}</small></span></button></div>) : pages.map((page) => <div className={`page-card ${page.id === activeId ? 'selected' : ''}`} key={page.id}><button className="page-card-main" onClick={() => openNotebook(activeNotebookId, page.id)}><span className={`page-preview ${page.tone}`}><span className="preview-line wide" /><span className="preview-line" /><span className="preview-equation">f(x) → L</span></span><span className="page-copy"><strong>{page.label}</strong><small>Page {pages.findIndex((p) => p.id === page.id) + 1}</small></span></button><button className="row-delete page-delete" aria-label={`Delete ${page.label}`} onClick={() => deletePage(page.id)}><Trash2 /></button></div>)}
         </div>}
         {view === 'notebook' && <button className="add-page" onClick={addPage}><Plus />Add new page</button>}
       </aside>
 
-      {view !== 'notebook' ? <CollectionView view={view} notebooks={notebooks} allPages={allPages} onOpen={openNotebook} onCreate={addNotebook} /> : <section className="editor-area">
+      {view !== 'notebook' ? <CollectionView view={view} notebooks={notebooks} onOpen={openNotebook} onCreate={addNotebook} /> : <section className="editor-area">
         <div className="editor-header"><div><span className="crumb">{activeNotebook?.name} / Notes</span><input className="editable-page-title" value={activePage?.label ?? ''} onChange={(event) => renameActive(event.target.value)} onBlur={(event) => finishRename(event.target.value)} aria-label="Page title" /></div><div className="save-state"><span />Saved just now</div></div>
         <div className="toolbar" role="toolbar" aria-label="Note tools">
           <ToolButton label="Select" active={tool === 'select'} onClick={() => setTool('select')}><MousePointer2 /></ToolButton>
@@ -268,8 +268,8 @@ function FolderList({ notebooks, onOpen }: { notebooks: Notebook[]; onOpen: (id:
   return <div className="folder-list">{folders.map((folder)=><section key={folder}><div className="folder-title"><FolderOpen />{folder}</div>{notebooks.filter((book)=>book.folder===folder).map((book)=><button key={book.id} onClick={()=>onOpen(book.id)}>{book.name}<span>{book.pages.length}</span></button>)}</section>)}</div>;
 }
 
-function CollectionView({ view, notebooks, allPages, onOpen, onCreate }: { view:'all'|'folders'; notebooks:Notebook[]; allPages:Array<NotePage & {notebookId:number;notebookName:string}>; onOpen:(id:number,pageId?:number)=>void; onCreate:()=>void }) {
-  return <section className="collection-view"><div className="collection-header"><div><span className="crumb">Your library</span><h1>{view==='all'?'All notes':'Folders'}</h1></div><button onClick={onCreate}><Plus />New notebook</button></div>{view==='all'?<div className="note-grid">{allPages.map((page)=><button key={page.id} onClick={()=>onOpen(page.notebookId,page.id)}><span className={`large-page-preview ${page.tone}`}><span>f(x) → L</span></span><strong>{page.label}</strong><small>{page.notebookName}</small></button>)}</div>:<div className="folder-grid">{[...new Set(notebooks.map((book)=>book.folder))].map((folder)=><section key={folder}><FolderOpen /><h2>{folder}</h2><p>{notebooks.filter((book)=>book.folder===folder).length} notebooks</p>{notebooks.filter((book)=>book.folder===folder).map((book)=><button key={book.id} onClick={()=>onOpen(book.id)}>{book.name}<span>{book.pages.length} pages</span></button>)}</section>)}</div>}</section>;
+function CollectionView({ view, notebooks, onOpen, onCreate }: { view:'all'|'folders'; notebooks:Notebook[]; onOpen:(id:number,pageId?:number)=>void; onCreate:()=>void }) {
+  return <section className="collection-view"><div className="collection-header"><div><span className="crumb">Your library</span><h1>{view==='all'?'All notes':'Folders'}</h1></div><button onClick={onCreate}><Plus />New notebook</button></div>{view==='all'?<div className="note-grid">{notebooks.map((book)=><button key={book.id} onClick={()=>onOpen(book.id)}><span className={`large-page-preview ${book.pages[0]?.tone ?? 'mint'} notebook-large-cover`}><span className={`large-spine ${book.color}`} /><span className="cover-title">{book.name}</span></span><strong>{book.name}</strong><small>{book.pages.length} pages · {book.folder}</small></button>)}</div>:<div className="folder-grid">{[...new Set(notebooks.map((book)=>book.folder))].map((folder)=><section key={folder}><FolderOpen /><h2>{folder}</h2><p>{notebooks.filter((book)=>book.folder===folder).length} notebooks</p>{notebooks.filter((book)=>book.folder===folder).map((book)=><button key={book.id} onClick={()=>onOpen(book.id)}>{book.name}<span>{book.pages.length} pages</span></button>)}</section>)}</div>}</section>;
 }
 
 function CompiledSheet({ notebookName }: { notebookName:string }) {
