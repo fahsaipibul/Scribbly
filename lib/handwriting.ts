@@ -36,18 +36,29 @@ export function writeInk(text: string, x: number, y: number, scale = 3.2, color 
   for (const raw of text.toUpperCase()) {
     if (raw === '\n' || cursorX + advance > x + maxWidth) { cursorX = x; cursorY += lineHeight; if (raw === '\n') continue; }
     const glyph = glyphs[raw] ?? glyphs[' '];
-    glyph.forEach((row, rowIndex) => {
-      let start = -1;
-      for (let column = 0; column <= row.length; column++) {
-        const on = column < row.length && row[column] === '1';
-        if (on && start < 0) start = column;
-        if (!on && start >= 0) {
-          const fromX = cursorX + start * scale, toX = cursorX + (column - .18) * scale, py = cursorY + rowIndex * scale;
-          strokes.push({ points: [{ x: fromX + jitter(seed++), y: py + jitter(seed++) }, { x: (fromX + toX) / 2 + jitter(seed++), y: py + jitter(seed++) }, { x: toX + jitter(seed++), y: py + jitter(seed++) }], color, width });
-          start = -1;
+    const active = new Set<string>();
+    glyph.forEach((row, rowIndex) => [...row].forEach((cell, column) => { if (cell === '1') active.add(`${column},${rowIndex}`); }));
+    const visited = new Set<string>();
+    const directions = [[1,0],[-1,0],[0,1],[0,-1],[1,1],[-1,1],[1,-1],[-1,-1]];
+    for (const startKey of active) {
+      if (visited.has(startKey)) continue;
+      const path: InkPoint[] = [];
+      const trace = (key: string) => {
+        visited.add(key);
+        const [column,row] = key.split(',').map(Number);
+        path.push({ x:cursorX+column*scale+jitter(seed++), y:cursorY+row*scale+jitter(seed++) });
+        for (const [dx,dy] of directions) {
+          const next = `${column+dx},${row+dy}`;
+          if (active.has(next) && !visited.has(next)) {
+            trace(next);
+            path.push({ x:cursorX+column*scale+jitter(seed++), y:cursorY+row*scale+jitter(seed++) });
+          }
         }
-      }
-    });
+      };
+      trace(startKey);
+      if (path.length === 1) path.push({ x:path[0].x+.8, y:path[0].y+.8 });
+      strokes.push({ points:path, color, width });
+    }
     cursorX += advance + jitter(seed++);
   }
   return strokes;

@@ -60,16 +60,20 @@ export default function Home() {
     try {
       const saved = localStorage.getItem('scribbly-workspace-v3');
       if (!saved) return;
-      const data = JSON.parse(saved) as { notebooks?: Notebook[]; strokes?: Record<number, Stroke[]>; text?: Record<number, TextBox[]>; sources?: Record<number, Array<{ pageId:number; label:string }>> };
+      const data = JSON.parse(saved) as { notebooks?: Notebook[]; strokes?: Record<number, Stroke[]>; text?: Record<number, TextBox[]>; sources?: Record<number, Array<{ pageId:number; label:string }>>; handwritingVersion?: number };
       if (data.notebooks?.length) setNotebooks(data.notebooks);
-      if (data.strokes) setStrokesByPage(data.strokes);
+      if (data.strokes) {
+        const migrated = { ...data.strokes };
+        if (data.handwritingVersion !== 2) data.notebooks?.flatMap((book)=>book.pages).filter((page)=>page.compiled).forEach((page)=>{ migrated[page.id]=createCompiledInk('formulas'); });
+        setStrokesByPage(migrated);
+      }
       if (data.text) setTextByPage(data.text);
       if (data.sources) setCompiledSources(data.sources);
     } catch { /* keep starter workspace */ }
   }, []);
 
   useEffect(() => {
-    localStorage.setItem('scribbly-workspace-v3', JSON.stringify({ notebooks, strokes: strokesByPage, text: textByPage, sources: compiledSources }));
+    localStorage.setItem('scribbly-workspace-v3', JSON.stringify({ notebooks, strokes: strokesByPage, text: textByPage, sources: compiledSources, handwritingVersion:2 }));
   }, [notebooks, strokesByPage, textByPage, compiledSources]);
 
   useEffect(() => {
