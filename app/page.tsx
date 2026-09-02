@@ -6,7 +6,7 @@ import {
   Highlighter, ImagePlus, LassoSelect, Menu, MousePointer2, PenLine,
   Plus, Redo2, Search, Sparkles, Trash2, Type, Undo2,
 } from 'lucide-react';
-import { createAICompiledInk, createCompiledInk, type CompilationSection } from '@/lib/handwriting';
+import { createCompiledInk, writeInk, type CompilationSection } from '@/lib/handwriting';
 
 type Point = { x: number; y: number };
 type Stroke = { points: Point[]; color: string; width: number };
@@ -245,7 +245,8 @@ export default function Home() {
         body: JSON.stringify({ request, notebook: activeNotebook.name, pages: sourcePages.slice(0, 8).map((page) => ({ id: page.id, label: page.label, image: pageSnapshot(page.id, page.label) })) }),
       });
       const result = await response.json() as { title?: string; sections?: CompilationSection[]; error?: string };
-      if (!response.ok || !result.title || !result.sections?.length) throw new Error(result.error || 'Scribbly could not compile these notes.');
+      if (!response.ok || !result.title || !result.sections) throw new Error(result.error || 'Scribbly could not compile these notes.');
+      if (!result.sections.length) throw new Error('I could not find anything matching that request. Try adding an “EX”, “Definition”, or formula label beside your notes.');
       finishCompilation(result.title, result.sections, sourcePages);
     } catch (error) {
       setCompileError(error instanceof Error ? error.message : 'Scribbly could not compile these notes.');
@@ -255,19 +256,52 @@ export default function Home() {
   function finishCompilation(title: string, sections: CompilationSection[], sourcePages: NotePage[]) {
     const id = Date.now();
     const label = title.slice(0, 60) || 'Compiled study sheet';
-    const generated = createAICompiledInk(title, sections);
-    const referencedIds = new Set(sections.flatMap((section) => section.sourcePageIds));
-    const referencedPages = sourcePages.filter((page) => referencedIds.has(page.id));
+    const generated: Stroke[] = [...writeInk(title, 62, 64, 3.8, '#24322f', 2.7, 620)];
     const copied: Stroke[] = [];
-    const copyPage = referencedPages[0];
-    if (copyPage) {
-      const original = strokesByPage[copyPage.id] ?? [];
-      const points = original.flatMap((stroke) => stroke.points);
-      if (points.length) {
-        const minX = Math.min(...points.map((p) => p.x)), minY = Math.min(...points.map((p) => p.y));
-        original.forEach((stroke) => copied.push({ ...stroke, points: stroke.points.map((p) => ({ x:72+(p.x-minX)*.45, y:790+(p.y-minY)*.45 })), width:Math.max(1.2,stroke.width*.62) }));
+    let cursorY = 140;
+    const usedStrokes = new Set<string>();
+
+    for (const section of sections.slice(0, 8)) {
+      generated.push(...writeInk(section.heading, 64, cursorY, 3, '#d76552', 2.3, 590));
+      cursorY += 48;
+      let copiedOriginal = false;
+
+      for (const region of section.sourceRegions.slice(0, 4)) {
+        const source = strokesByPage[region.pageId] ?? [];
+        const regionBounds = {
+          x: region.x * .9 - 16, y: region.y * 1.05 - 16,
+          width: region.width * .9 + 32, height: region.height * 1.05 + 32,
+        };
+        const selected = source.map((stroke, index) => ({ stroke, index })).filter(({ stroke, index }) => {
+          if (usedStrokes.has(`${region.pageId}-${index}`) || !stroke.points.length) return false;
+          const bounds = boundsFor(stroke.points);
+          return bounds.x <= regionBounds.x + regionBounds.width && bounds.x + bounds.width >= regionBounds.x && bounds.y <= regionBounds.y + regionBounds.height && bounds.y + bounds.height >= regionBounds.y;
+        });
+        const points = selected.flatMap(({ stroke }) => stroke.points);
+        if (!points.length) continue;
+        const sourceBounds = boundsFor(points);
+        const scale = Math.min(.9, 680 / Math.max(sourceBounds.width, 1), 190 / Math.max(sourceBounds.height, 1));
+        selected.forEach(({ stroke, index }) => {
+          usedStrokes.add(`${region.pageId}-${index}`);
+          copied.push({ ...stroke, width: Math.max(1, stroke.width * scale), points: stroke.points.map((sample) => ({ x: 76 + (sample.x - sourceBounds.x) * scale, y: cursorY + (sample.y - sourceBounds.y) * scale })) });
+        });
+        cursorY += Math.max(44, sourceBounds.height * scale) + 28;
+        copiedOriginal = true;
+        if (cursorY > 990) break;
       }
+
+      if (!copiedOriginal) {
+        for (const line of section.lines.slice(0, 4)) {
+          generated.push(...writeInk(line, 78, cursorY, 2.45, '#24322f', 2, 570));
+          cursorY += 34 * Math.max(1, Math.ceil(line.length / 38));
+        }
+        cursorY += 20;
+      }
+      if (cursorY > 990) break;
     }
+
+    const referencedIds = new Set(sections.flatMap((section) => [...section.sourcePageIds, ...section.sourceRegions.map((region) => region.pageId)]));
+    const referencedPages = sourcePages.filter((page) => referencedIds.has(page.id));
     updatePages((current) => [...current, { id, label, tone:'formula', compiled:true }]);
     setStrokesByPage((current) => ({ ...current, [id]:[...generated,...copied] }));
     setCompiledSources((current) => ({ ...current, [id]:(referencedPages.length?referencedPages:sourcePages).map((page)=>({pageId:page.id,label:page.label})) }));

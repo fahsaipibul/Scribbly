@@ -8,13 +8,27 @@ const compilationSchema = {
   properties: {
     title: { type: 'string' },
     sections: {
-      type: 'array', minItems: 1, maxItems: 8,
+      type: 'array', maxItems: 8,
       items: {
-        type: 'object', additionalProperties: false, required: ['heading', 'lines', 'sourcePageIds'],
+        type: 'object', additionalProperties: false, required: ['heading', 'lines', 'sourcePageIds', 'sourceRegions'],
         properties: {
           heading: { type: 'string' },
-          lines: { type: 'array', minItems: 1, maxItems: 8, items: { type: 'string' } },
+          lines: { type: 'array', maxItems: 4, items: { type: 'string' } },
           sourcePageIds: { type: 'array', items: { type: 'integer' } },
+          sourceRegions: {
+            type: 'array', maxItems: 4,
+            items: {
+              type: 'object', additionalProperties: false,
+              required: ['pageId', 'x', 'y', 'width', 'height'],
+              properties: {
+                pageId: { type: 'integer' },
+                x: { type: 'number', minimum: 0, maximum: 1000 },
+                y: { type: 'number', minimum: 0, maximum: 1000 },
+                width: { type: 'number', minimum: 1, maximum: 1000 },
+                height: { type: 'number', minimum: 1, maximum: 1000 },
+              },
+            },
+          },
         },
       },
     },
@@ -48,7 +62,14 @@ export async function POST(request: Request) {
       headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({
         model: 'gpt-4o-mini', store: false,
-        instructions: 'You compile handwritten study notes. Read every supplied page image carefully. Follow the user request exactly. Preserve mathematical notation in plain keyboard-friendly form. Do not invent facts not present in the notes. Keep lines concise enough to fit on a handwritten study sheet. sourcePageIds must contain only page ids supplied in the prompt and must identify where each section came from.',
+        instructions: `You compile handwritten study notes by locating the user's original ink. Read every supplied page image carefully and follow the user request exactly.
+
+For formulas: find equations, identities, rules, and formula blocks.
+For examples: find complete worked-example blocks, especially anything marked EX, EXAMPLE, or followed by working.
+For definitions: find the term and its full written definition.
+For custom requests: locate every relevant handwritten block.
+
+For every matching item, return a tight sourceRegions rectangle around the complete original handwritten block. Coordinates are normalized from 0 to 1000 relative to the full image: x from the left, y from the top, width and height. Do not combine distant items into one large region. pageId must be one supplied in the prompt. sourcePageIds must list the same pages used by sourceRegions. Use heading only as a short generated label. Keep lines empty when original handwriting exists; lines are a fallback only for relevant typed content that has no handwritten source region. Do not invent facts. If nothing matches the request, return an empty sections array.`,
         input: [{ role: 'user', content }],
         text: { format: { type: 'json_schema', name: 'scribbly_compilation', strict: true, schema: compilationSchema } },
         max_output_tokens: 1800,

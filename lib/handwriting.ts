@@ -90,7 +90,8 @@ export function createCompiledInk(kind: string): InkStroke[] {
   return result;
 }
 
-export type CompilationSection = { heading: string; lines: string[]; sourcePageIds: number[] };
+export type CompilationRegion = { pageId: number; x: number; y: number; width: number; height: number };
+export type CompilationSection = { heading: string; lines: string[]; sourcePageIds: number[]; sourceRegions: CompilationRegion[] };
 
 export function createAICompiledInk(title: string, sections: CompilationSection[]): InkStroke[] {
   const result: InkStroke[] = [];
