@@ -6,6 +6,7 @@ import {
   Highlighter, ImagePlus, LassoSelect, Menu, MousePointer2, PenLine,
   Plus, Redo2, Search, Sparkles, Trash2, Type, Undo2,
 } from 'lucide-react';
+import { createCompiledInk } from '@/lib/handwriting';
 
 type Point = { x: number; y: number };
 type Stroke = { points: Point[]; color: string; width: number };
@@ -45,6 +46,10 @@ export default function Home() {
   const [selectionBounds, setSelectionBounds] = useState<Bounds | null>(null);
   const [dragOrigin, setDragOrigin] = useState<Point | null>(null);
   const [notice, setNotice] = useState('');
+  const [compileOpen, setCompileOpen] = useState(false);
+  const [compileKind, setCompileKind] = useState('formulas');
+  const [compileRequest, setCompileRequest] = useState('');
+  const [compiledSources, setCompiledSources] = useState<Record<number, Array<{ pageId:number; label:string }>>>({});
 
   const activeNotebook = notebooks.find((book) => book.id === activeNotebookId) ?? notebooks[0];
   const pages = activeNotebook?.pages ?? [];
@@ -55,16 +60,17 @@ export default function Home() {
     try {
       const saved = localStorage.getItem('scribbly-workspace-v3');
       if (!saved) return;
-      const data = JSON.parse(saved) as { notebooks?: Notebook[]; strokes?: Record<number, Stroke[]>; text?: Record<number, TextBox[]> };
+      const data = JSON.parse(saved) as { notebooks?: Notebook[]; strokes?: Record<number, Stroke[]>; text?: Record<number, TextBox[]>; sources?: Record<number, Array<{ pageId:number; label:string }>> };
       if (data.notebooks?.length) setNotebooks(data.notebooks);
       if (data.strokes) setStrokesByPage(data.strokes);
       if (data.text) setTextByPage(data.text);
+      if (data.sources) setCompiledSources(data.sources);
     } catch { /* keep starter workspace */ }
   }, []);
 
   useEffect(() => {
-    localStorage.setItem('scribbly-workspace-v3', JSON.stringify({ notebooks, strokes: strokesByPage, text: textByPage }));
-  }, [notebooks, strokesByPage, textByPage]);
+    localStorage.setItem('scribbly-workspace-v3', JSON.stringify({ notebooks, strokes: strokesByPage, text: textByPage, sources: compiledSources }));
+  }, [notebooks, strokesByPage, textByPage, compiledSources]);
 
   useEffect(() => {
     const context = (document as Document & { modelContext?: { registerTool: (tool: object, options?: { signal?: AbortSignal }) => void | Promise<void> } }).modelContext;
@@ -75,7 +81,7 @@ export default function Home() {
       description: 'Create or open an editable demo formula sheet inside the current Scribbly notebook.',
       inputSchema: { type: 'object', properties: {}, additionalProperties: false },
       annotations: { readOnlyHint: false, untrustedContentHint: false },
-      execute: async () => { compileFormulaSheet(); return { status: 'created', notebook: activeNotebook.name, page: 'Formula sheet' }; },
+      execute: async () => { runCompilation('formulas'); return { status: 'created', notebook: activeNotebook.name, page: 'Formula sheet' }; },
     }, { signal: lifecycle.signal })).catch(() => {});
     return () => lifecycle.abort();
   }, [notebooks, activeNotebookId]);
@@ -200,10 +206,23 @@ export default function Home() {
     const next = pages.filter((item) => item.id !== id); updatePages(() => next); if (activeId === id) setActiveId(next[0].id); showNotice('Page deleted');
   }
 
-  function compileFormulaSheet() {
-    setTool('select'); setView('notebook'); const existing = pages.find((page) => page.compiled);
-    if (existing) { setActiveId(existing.id); showNotice('Opened your formula sheet'); }
-    else { const id = Date.now(); updatePages((current) => [...current, { id, label: 'Formula sheet', tone: 'formula', compiled: true }]); setActiveId(id); showNotice('Editable demo formula sheet created'); }
+  function runCompilation(request: string) {
+    const id = Date.now();
+    const lower = request.toLowerCase();
+    const label = lower.includes('example') ? 'Example booklet' : lower.includes('definition') ? 'Definitions sheet' : 'Compiled study sheet';
+    const generated = createCompiledInk(request);
+    const sourcePages = pages.filter((page) => (strokesByPage[page.id] ?? []).length > 0);
+    const copied: Stroke[] = [];
+    if (sourcePages.length) {
+      const original = strokesByPage[sourcePages[0].id] ?? [];
+      const points = original.flatMap((stroke) => stroke.points);
+      const minX = Math.min(...points.map((p) => p.x)), minY = Math.min(...points.map((p) => p.y));
+      original.forEach((stroke) => copied.push({ ...stroke, points: stroke.points.map((p) => ({ x:72+(p.x-minX)*.55, y:760+(p.y-minY)*.55 })), width:Math.max(1.2,stroke.width*.7) }));
+    }
+    updatePages((current) => [...current, { id, label, tone:'formula', compiled:true }]);
+    setStrokesByPage((current) => ({ ...current, [id]:[...generated,...copied] }));
+    setCompiledSources((current) => ({ ...current, [id]:(sourcePages.length?sourcePages:pages.slice(0,1)).map((page)=>({pageId:page.id,label:page.label})) }));
+    setActiveId(id); setTool('pen'); setView('notebook'); setCompileOpen(false); showNotice('Handwritten compilation created');
   }
 
   const allStrokes = draft ? [...strokes, draft] : strokes;
@@ -247,10 +266,11 @@ export default function Home() {
           <span className="tool-divider" />
           <ToolButton label="Pen" active={tool === 'pen'} onClick={() => setTool('pen')}><PenLine /></ToolButton><ToolButton label="Highlight" active={tool === 'highlighter'} onClick={() => setTool('highlighter')}><Highlighter /></ToolButton><ToolButton label="Eraser" active={tool === 'eraser'} onClick={() => setTool('eraser')}><Eraser /></ToolButton><ToolButton label="Text" active={tool === 'text'} onClick={() => setTool('text')}><Type /></ToolButton><ToolButton label="Image" active={false} onClick={() => {}}><ImagePlus /></ToolButton>
           <span className="tool-divider" /><button className="color-dot" aria-label="Ink color" /><button className="weight-button" aria-label="Pen size"><span /></button><span className="toolbar-spacer" />
-          <button className="icon-button compact" aria-label="Undo" onClick={undo}><Undo2 /></button><button className="icon-button compact" aria-label="Redo" disabled><Redo2 /></button><button className="compile-button" onClick={compileFormulaSheet}><Sparkles />Compile formulas <span>Demo</span></button>
+          <button className="icon-button compact" aria-label="Undo" onClick={undo}><Undo2 /></button><button className="icon-button compact" aria-label="Redo" disabled><Redo2 /></button><button className="compile-button" onClick={() => setCompileOpen(true)}><Sparkles />Compile <span>Stroke demo</span></button>
         </div>
         <div className="desk"><article ref={paperRef} className={`paper squared-paper paper-tool-${tool}`} onClick={addText}>
-          {activePage?.compiled ? <CompiledSheet notebookName={activeNotebook.name} /> : <div className="paper-content"><p className="hand date">September 2</p><h2 className="hand editable-paper-title" contentEditable suppressContentEditableWarning onBlur={(event) => finishRename(event.currentTarget.textContent ?? '')}>{activePage?.label}</h2><div className="hand underline" />{activeId === 1 ? <><p className="hand note">A limit describes the value a function approaches<br />as the input gets closer to some value.</p><div className="formula-card hand"><span className="formula-label">Definition</span><strong>lim&nbsp; f(x) = L</strong><small>x → a</small></div><p className="hand ex"><b>EX</b>&nbsp;&nbsp; Find the limit:</p><p className="hand equation">lim&nbsp; (x² − 4) / (x − 2) = 4</p></> : <p className="hand empty-hint">Pick up the pen and make this page yours.</p>}</div>}
+          {!activePage?.compiled && <div className="paper-content"><p className="hand date">September 2</p><h2 className="hand editable-paper-title" contentEditable suppressContentEditableWarning onBlur={(event) => finishRename(event.currentTarget.textContent ?? '')}>{activePage?.label}</h2><div className="hand underline" />{activeId === 1 ? <><p className="hand note">A limit describes the value a function approaches<br />as the input gets closer to some value.</p><div className="formula-card hand"><span className="formula-label">Definition</span><strong>lim&nbsp; f(x) = L</strong><small>x → a</small></div><p className="hand ex"><b>EX</b>&nbsp;&nbsp; Find the limit:</p><p className="hand equation">lim&nbsp; (x² − 4) / (x − 2) = 4</p></> : <p className="hand empty-hint">Pick up the pen and make this page yours.</p>}</div>}
+          {activePage?.compiled && compiledSources[activeId]?.length > 0 && <button className="source-chip" onClick={() => openNotebook(activeNotebookId, compiledSources[activeId][0].pageId)}>↗ Go to original: {compiledSources[activeId][0].label}</button>}
           {(textByPage[activeId] ?? []).map((item) => <div key={item.id} className="canvas-text" style={{ left:item.x, top:item.y }} contentEditable suppressContentEditableWarning onPointerDown={(event) => event.stopPropagation()} onClick={(event) => event.stopPropagation()} onBlur={(event) => editText(item.id, event.currentTarget.textContent ?? '')}>{item.text}</div>)}
           <svg ref={svgRef} className={`ink-layer tool-${tool}`} onPointerDown={startStroke} onPointerMove={moveStroke} onPointerUp={endStroke} onPointerCancel={endStroke}>
             {allStrokes.map((stroke,index) => <polyline key={index} className={selection.includes(index) ? 'selected-stroke' : ''} points={stroke.points.map((p)=>`${p.x},${p.y}`).join(' ')} fill="none" stroke={stroke.color} strokeWidth={stroke.width} strokeLinecap="round" strokeLinejoin="round" opacity={stroke.width>10?.45:1} />)}
@@ -259,7 +279,7 @@ export default function Home() {
           </svg>
         </article></div>
       </section>}
-    </div>{notice && <div className="toast-notice" role="status">{notice}</div>}
+    </div>{compileOpen && <div className="compile-overlay" role="dialog" aria-modal="true" aria-label="Compile notebook"><div className="compile-dialog"><div className="compile-dialog-icon"><Sparkles /></div><h2>What would you like to compile?</h2><p>Scribbly will create a new page using native, erasable pen strokes.</p><div className="compile-options">{['formulas','examples','definitions','custom'].map((kind)=><button key={kind} className={compileKind===kind?'active':''} onClick={()=>setCompileKind(kind)}>{kind}</button>)}</div>{compileKind==='custom'&&<textarea value={compileRequest} onChange={(event)=>setCompileRequest(event.target.value)} placeholder="e.g. Formulas with one example beneath each" autoFocus />}<div className="compile-actions"><button onClick={()=>setCompileOpen(false)}>Cancel</button><button className="create-compilation" onClick={()=>runCompilation(compileKind==='custom'?`custom ${compileRequest}`:compileKind)}><Sparkles />Create handwritten sheet</button></div></div></div>}{notice && <div className="toast-notice" role="status">{notice}</div>}
   </main>;
 }
 
@@ -270,15 +290,6 @@ function FolderList({ notebooks, onOpen }: { notebooks: Notebook[]; onOpen: (id:
 
 function CollectionView({ view, notebooks, onOpen, onCreate }: { view:'all'|'folders'; notebooks:Notebook[]; onOpen:(id:number,pageId?:number)=>void; onCreate:()=>void }) {
   return <section className="collection-view"><div className="collection-header"><div><span className="crumb">Your library</span><h1>{view==='all'?'All notes':'Folders'}</h1></div><button onClick={onCreate}><Plus />New notebook</button></div>{view==='all'?<div className="note-grid">{notebooks.map((book)=><button key={book.id} onClick={()=>onOpen(book.id)}><span className={`large-page-preview ${book.pages[0]?.tone ?? 'mint'} notebook-large-cover`}><span className={`large-spine ${book.color}`} /><span className="cover-title">{book.name}</span></span><strong>{book.name}</strong><small>{book.pages.length} pages · {book.folder}</small></button>)}</div>:<div className="folder-grid">{[...new Set(notebooks.map((book)=>book.folder))].map((folder)=><section key={folder}><FolderOpen /><h2>{folder}</h2><p>{notebooks.filter((book)=>book.folder===folder).length} notebooks</p>{notebooks.filter((book)=>book.folder===folder).map((book)=><button key={book.id} onClick={()=>onOpen(book.id)}>{book.name}<span>{book.pages.length} pages</span></button>)}</section>)}</div>}</section>;
-}
-
-function CompiledSheet({ notebookName }: { notebookName:string }) {
-  const starterItems=[{id:1,label:'Limit definition',formula:'limₓ→ₐ f(x) = L',note:'The value f(x) approaches as x approaches a.'},{id:2,label:'Difference of squares',formula:'x² − a² = (x − a)(x + a)',note:'Useful for simplifying limits before substitution.'},{id:3,label:'Power rule',formula:'d/dx [xⁿ] = nxⁿ⁻¹',note:'Multiply by the exponent, then subtract one.'}];
-  const [items,setItems]=useState(starterItems); const [sheetTitle,setSheetTitle]=useState('My formula sheet');
-  useEffect(()=>{try{const saved=localStorage.getItem('scribbly-compiled-sheet');if(saved){const parsed=JSON.parse(saved);if(parsed.title)setSheetTitle(parsed.title);if(parsed.items)setItems(parsed.items);}}catch{}},[]);
-  useEffect(()=>{localStorage.setItem('scribbly-compiled-sheet',JSON.stringify({title:sheetTitle,items}));},[items,sheetTitle]);
-  function editItem(id:number,field:'label'|'formula'|'note',value:string){setItems((all)=>all.map((item)=>item.id===id?{...item,[field]:value}:item));}
-  return <div className="compiled-sheet"><div className="compiled-kicker"><Sparkles />Demo compilation · {notebookName}</div><h2 contentEditable suppressContentEditableWarning onBlur={(event)=>setSheetTitle(event.currentTarget.textContent||'Formula sheet')}>{sheetTitle}</h2><p className="compiled-help">Everything here is editable. Click any text, remove a card, or write over it.</p><div className="formula-grid">{items.map((item)=><section className="compiled-card" key={item.id}><button className="remove-card" onClick={()=>setItems((all)=>all.filter((entry)=>entry.id!==item.id))}>×</button><small contentEditable suppressContentEditableWarning onBlur={(e)=>editItem(item.id,'label',e.currentTarget.textContent??'')}>{item.label}</small><strong contentEditable suppressContentEditableWarning onBlur={(e)=>editItem(item.id,'formula',e.currentTarget.textContent??'')}>{item.formula}</strong><p contentEditable suppressContentEditableWarning onBlur={(e)=>editItem(item.id,'note',e.currentTarget.textContent??'')}>{item.note}</p><span className="source-link">↗ Page {item.id}</span></section>)}</div><button className="add-formula" onClick={()=>setItems((all)=>[...all,{id:Date.now(),label:'New formula',formula:'Tap to edit',note:'Add your note here.'}])}><Plus />Add formula</button></div>;
 }
 
 function ToolButton({children,label,active,onClick}:{children:React.ReactNode;label:string;active:boolean;onClick:()=>void}) { return <button className={`tool-button ${active?'active':''}`} onClick={onClick} title={label} aria-label={label}>{children}<span>{label}</span></button>; }
