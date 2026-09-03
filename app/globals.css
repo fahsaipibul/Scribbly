@@ -63,3 +63,13 @@ button:focus-visible { outline:3px solid rgba(73,97,88,.24); outline-offset:2px;
 .canvas-text { min-width:20px; white-space:pre; font:500 22px/20px 'ScribblyHand',cursive; }
 .photo-dialog textarea { font:500 22px/1.4 'ScribblyHand',cursive; }
 .selected-text { outline:1px dashed #4e7b69; background:#edf5ed; }
+.welcome-guide { max-width:560px; font:14px/1.5 Arial,Helvetica,sans-serif; color:#485c51; }
+.welcome-intro { margin:22px 0; font-size:17px; color:#657d70; }
+.welcome-guide ol { margin:0; padding-left:24px; }
+.welcome-guide li { margin:0 0 19px; padding-left:7px; }
+.welcome-guide li::marker { color:#557564; font-weight:700; }
+.welcome-guide h3 { margin:0 0 4px; font-size:16px; color:#273a33; }
+.welcome-guide p { margin-top:0; }
+.welcome-guide li p { margin-bottom:0; }
+.welcome-footer { margin:23px 0 0; border-top:1px solid #c9d7ce; padding-top:15px; font-size:12px; }
+@media(max-width:700px) { .welcome-guide { font-size:12px; line-height:1.4; } .welcome-guide h3 { font-size:14px; } .welcome-guide li { margin-bottom:14px; } }

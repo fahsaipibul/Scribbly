@@ -13,7 +13,7 @@ import { createCompiledInk } from '@/lib/handwriting';
 type Point = { x: number; y: number };
 type Stroke = { points: Point[]; color: string; width: number };
 type TextBox = { id: number; x: number; y: number; text: string };
-type NotePage = { id: number; label: string; tone: string; compiled?: boolean; sourceImage?: string };
+type NotePage = { id: number; label: string; tone: string; compiled?: boolean; sourceImage?: string; guide?: boolean };
 type Notebook = { id: number; name: string; color: string; folder: string; pages: NotePage[] };
 type Bounds = { x: number; y: number; width: number; height: number };
 type Category = { id: string; name: string; color: string };
@@ -27,16 +27,16 @@ const starterCategories: Category[] = [
 
 const starterNotebooks: Notebook[] = [
   { id: 1, name: 'Calculus I', color: 'coral', folder: 'School', pages: [
-    { id: 1, label: 'Limits & continuity', tone: 'peach' },
-    { id: 2, label: 'Derivative rules', tone: 'blue' },
-    { id: 3, label: 'Practice examples', tone: 'mint' },
+    { id: 1, label: 'Welcome to Scribbly', tone: 'peach', guide: true },
+    { id: 2, label: 'Untitled page', tone: 'blue' },
+    { id: 3, label: 'Untitled page', tone: 'mint' },
   ] },
   { id: 2, name: 'Physics', color: 'lavender', folder: 'School', pages: [
-    { id: 101, label: 'Motion & forces', tone: 'blue' },
-    { id: 102, label: 'Energy', tone: 'mint' },
+    { id: 101, label: 'Untitled page', tone: 'blue' },
+    { id: 102, label: 'Untitled page', tone: 'mint' },
   ] },
   { id: 3, name: 'Ideas', color: 'yellow', folder: 'Personal', pages: [
-    { id: 201, label: 'Loose thoughts', tone: 'peach' },
+    { id: 201, label: 'Untitled page', tone: 'peach' },
   ] },
 ];
 
@@ -77,7 +77,20 @@ export default function Home() {
     void (async()=>{try {
       const saved = localStorage.getItem('scribbly-workspace-v3');
       if (!saved) return;
-      const data = JSON.parse(saved) as { notebooks?: Notebook[]; strokes?: Record<number, Stroke[]>; text?: Record<number, TextBox[]>; sources?: Record<number, Array<{ pageId:number; label:string }>>; categories?:Category[]; taggedBlocks?:TaggedBlock[]; handwritingVersion?: number; cleanCompiledTitles?:boolean };
+      const data = JSON.parse(saved) as { notebooks?: Notebook[]; strokes?: Record<number, Stroke[]>; text?: Record<number, TextBox[]>; sources?: Record<number, Array<{ pageId:number; label:string }>>; categories?:Category[]; taggedBlocks?:TaggedBlock[]; handwritingVersion?: number; cleanCompiledTitles?:boolean; welcomeVersion?:number };
+      if(data.notebooks?.length && data.welcomeVersion!==1) {
+        const defaults: Record<number,string>={1:'Limits & continuity',2:'Derivative rules',3:'Practice examples',101:'Motion & forces',102:'Energy',201:'Loose thoughts'};
+        const untouched=(page:NotePage)=>(data.strokes?.[page.id]?.length??0)===0&&(data.text?.[page.id]?.length??0)===0&&!page.compiled&&!page.sourceImage&&!(data.taggedBlocks??[]).some(block=>block.pageId===page.id);
+        data.notebooks=data.notebooks.map(book=>({...book,pages:book.pages.map(page=>
+          defaults[page.id]===page.label&&untouched(page)?{...page,label:page.id===1?'Welcome to Scribbly':'Untitled page',...(page.id===1?{guide:true}:{})}:page)}));
+        if(!data.notebooks.some(book=>book.pages.some(page=>page.guide))) {
+          const ids=data.notebooks.flatMap(book=>book.pages.map(page=>page.id));
+          const id=ids.reduce((lowest,value)=>Math.min(lowest,value),0)-1;
+          data.notebooks[0]={...data.notebooks[0],pages:[{id,label:'Welcome to Scribbly',tone:'peach',guide:true},...data.notebooks[0].pages]};
+        }
+      }
+      const landingBook=data.notebooks?.find(book=>book.pages.some(page=>page.guide))??data.notebooks?.[0];
+      if(landingBook){setActiveNotebookId(landingBook.id);setActiveId((landingBook.pages.find(page=>page.guide)??landingBook.pages[0]).id);}
       const allPages=data.notebooks?.flatMap(book=>book.pages)??[];
       const photoPages=allPages.filter(page=>(data.text?.[page.id]?.length??0)>0);
       if(photoPages.length) {
@@ -110,7 +123,7 @@ export default function Home() {
 
   useEffect(() => {
     if (!hydrated) return;
-    try { localStorage.setItem('scribbly-workspace-v3', JSON.stringify({ notebooks, strokes: strokesByPage, text: textByPage, sources: compiledSources, categories, taggedBlocks, handwritingVersion:2, cleanCompiledTitles:true })); setSaveError(false); } catch { setSaveError(true); }
+    try { localStorage.setItem('scribbly-workspace-v3', JSON.stringify({ notebooks, strokes: strokesByPage, text: textByPage, sources: compiledSources, categories, taggedBlocks, handwritingVersion:2, cleanCompiledTitles:true, welcomeVersion:1 })); setSaveError(false); } catch { setSaveError(true); }
   }, [hydrated, notebooks, strokesByPage, textByPage, compiledSources, categories, taggedBlocks]);
 
   useEffect(() => {
@@ -400,7 +413,7 @@ export default function Home() {
       <aside className="page-sidebar">
         <div className="page-heading"><div><span>{view === 'all' ? 'All notes' : view === 'folders' ? 'Folders' : 'Pages'}</span><strong>{view === 'all' ? `${notebooks.length} notebooks` : view === 'folders' ? 'Organized spaces' : `${pages.length} pages`}</strong></div>{view === 'notebook' && <button aria-label="Add page" onClick={addPage}><Plus /></button>}</div>
         {view === 'folders' ? <FolderList notebooks={notebooks} onOpen={openNotebook} /> : <div className="page-list">
-          {view === 'all' ? notebooks.map((book) => <div className="page-card" key={book.id}><button className="page-card-main" onClick={() => openNotebook(book.id)}><span className={`page-preview ${book.pages[0]?.tone ?? 'mint'} notebook-cover`}><span className={`notebook-spine ${book.color}`} /><span className="preview-line wide" /><span className="preview-line" /></span><span className="page-copy"><strong>{book.name}</strong><small>{book.pages.length} pages · {book.folder}</small></span></button></div>) : pages.map((page) => <div className={`page-card ${page.id === activeId ? 'selected' : ''}`} key={page.id}><button className="page-card-main" onClick={() => openNotebook(activeNotebookId, page.id)}><span className={`page-preview ${page.tone}`}><span className="preview-line wide" /><span className="preview-line" /><span className="preview-equation">f(x) → L</span></span><span className="page-copy"><strong>{page.label}</strong><small>Page {pages.findIndex((p) => p.id === page.id) + 1}</small></span></button><button className="row-delete page-delete" aria-label={`Delete ${page.label}`} onClick={() => deletePage(page.id)}><Trash2 /></button></div>)}
+          {view === 'all' ? notebooks.map((book) => <div className="page-card" key={book.id}><button className="page-card-main" onClick={() => openNotebook(book.id)}><span className={`page-preview ${book.pages[0]?.tone ?? 'mint'} notebook-cover`}><span className={`notebook-spine ${book.color}`} /><span className="preview-line wide" /><span className="preview-line" /></span><span className="page-copy"><strong>{book.name}</strong><small>{book.pages.length} pages · {book.folder}</small></span></button></div>) : pages.map((page) => <div className={`page-card ${page.id === activeId ? 'selected' : ''}`} key={page.id}><button className="page-card-main" onClick={() => openNotebook(activeNotebookId, page.id)}><span className={`page-preview ${page.tone}`}><span className="preview-line wide" /><span className="preview-line" />{page.guide&&<span className="preview-equation">Guide</span>}</span><span className="page-copy"><strong>{page.label}</strong><small>Page {pages.findIndex((p) => p.id === page.id) + 1}</small></span></button><button className="row-delete page-delete" aria-label={`Delete ${page.label}`} onClick={() => deletePage(page.id)}><Trash2 /></button></div>)}
         </div>}
         {view === 'notebook' && <button className="add-page" onClick={addPage}><Plus />Add new page</button>}
       </aside>
@@ -418,7 +431,7 @@ export default function Home() {
           <button className="icon-button compact" aria-label="Undo" onClick={undo}><Undo2 /></button><button className="icon-button compact" aria-label="Redo" disabled><Redo2 /></button><button className="compile-button" onClick={() => setCompileOpen(true)}><Sparkles />Compile <span>Categories</span></button>
         </div>
         <div className="desk page-stack">{pages.map((page)=>{ const isActive=page.id===activeId; const pageInk=strokesByPage[page.id]??[]; const renderedInk=isActive&&draft?[...pageInk,draft]:pageInk; return <article id={`paper-${page.id}`} key={page.id} className={`paper squared-paper paper-tool-${isActive?tool:'inactive'} ${isActive?'active-paper':''}`} onClick={(event)=>addText(event,page.id)}>
-          <div className={`paper-content ${page.compiled?'compiled-paper-heading':''}`}><h2 className="editable-paper-title" contentEditable={isActive} suppressContentEditableWarning onBlur={(event)=>{if(isActive)finishRename(event.currentTarget.textContent??'');}}>{page.label}</h2><div className="underline" />{!page.compiled&&page.id===1&&<><p className="hand note">A limit describes the value a function approaches<br />as the input gets closer to some value.</p><div className="formula-card hand"><span className="formula-label">Definition</span><strong>lim&nbsp; f(x) = L</strong><small>x → a</small></div><p className="hand ex"><b>EX</b>&nbsp;&nbsp; Find the limit:</p><p className="hand equation">lim&nbsp; (x² − 4) / (x − 2) = 4</p></>}</div>
+          <div className={`paper-content ${page.compiled?'compiled-paper-heading':''}`}><h2 className="editable-paper-title" contentEditable={isActive} suppressContentEditableWarning onBlur={(event)=>{if(isActive)finishRename(event.currentTarget.textContent??'');}}>{page.label}</h2><div className="underline" />{page.guide&&<WelcomeGuide />}</div>
           {page.compiled&&compiledSources[page.id]?.length>0&&<button className="source-chip" onClick={(event)=>{event.stopPropagation();openNotebook(activeNotebookId,compiledSources[page.id][0].pageId);}}>↗ Go to original: {compiledSources[page.id][0].label}</button>}
           {page.sourceImage && <img className="source-photo" src={page.sourceImage} alt="Original uploaded notes" />}
           {(textByPage[page.id]??[]).map((item)=><div id={`note-text-${page.id}-${item.id}`} key={item.id} className={`canvas-text ${isActive&&textSelection.includes(item.id)?'selected-text':''}`} style={{left:item.x,top:item.y,pointerEvents:isActive&&(tool==='select'||tool==='text')?'auto':'none'}} contentEditable={isActive&&(tool==='select'||tool==='text')} suppressContentEditableWarning onPointerDown={(event)=>event.stopPropagation()} onClick={(event)=>event.stopPropagation()} onBlur={(event)=>{if(isActive)editText(item.id,event.currentTarget.textContent??'');}}>{item.text}</div>)}
@@ -437,6 +450,22 @@ export default function Home() {
     {saveError && <div className="storage-error" role="alert">Device storage is full. Keep this tab open and remove unneeded source-photo pages before closing.</div>}
     {notice && <div className="toast-notice" role="status">{notice}</div>}
   </main>;
+}
+
+function WelcomeGuide() {
+  return <div className="welcome-guide">
+    <p className="welcome-intro">Your notebook, your handwriting.<br />A quick guide before you start.</p>
+    <ol>
+      <li><h3>Write & highlight</h3><p>Choose Pen to write with your stylus. Use Highlight to mark something important.</p></li>
+      <li><h3>Erase just a little</h3><p>The Eraser removes only the ink it touches — from your writing and imported notes. Undo restores an accidental erase.</p></li>
+      <li><h3>Lasso & move</h3><p>Draw a loop around your ink, then drag inside the selection to move it. Tap outside to select something else.</p></li>
+      <li><h3>Collect your favourites</h3><p>Lasso some ink and tap Add to category. Choose Formula, Example, Definition, or create your own colour-coded category.</p></li>
+      <li><h3>Compile a sheet</h3><p>Tap Compile and choose a category. Scribbly copies its tagged ink into a new sheet and keeps a Go to original link.</p></li>
+      <li><h3>Photo → handwriting</h3><p>Tap Image, choose a board photo or scan, then Add handwriting to notebook. The result is ink you can erase, move and write over. Check it against the saved source photo.</p></li>
+      <li><h3>Make room for more</h3><p>Add pages with + and scroll down through your notebook. All notes shows your notebooks; Folders groups them together.</p></li>
+    </ol>
+    <p className="welcome-footer">Your notes save in this browser on this device, not to the cloud. The next pages are yours to fill.</p>
+  </div>;
 }
 
 function FolderList({ notebooks, onOpen }: { notebooks: Notebook[]; onOpen: (id:number)=>void }) {
