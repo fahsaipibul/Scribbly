@@ -1,55 +1,86 @@
-# Scribbly
+# Scribbly ✍️
 
-Ever take notes in class and end up with formulas, examples, definitions, and key points all jumbled together? Scribbly lets you write naturally first, then categorize selected handwriting and compile it into formula sheets, problem sets, and any custom collection you need.
+### Messy notes. Your handwriting. A little magic.
 
-## Try Scribbly
+For the formulas hiding between doodles, the examples scattered across lectures, and the board you photographed before it disappeared.
 
-**[Open the live Scribbly demo](https://scribbly-notes.fpibul.chatgpt.site)**
+Scribbly is a tablet-first notebook that lets you write freely, collect the good bits, and turn photos into ink you can actually work with.
 
-## What works today
+## 🪄 Compile — your notes, remixed
 
-- Pen and highlighter tools for mouse, touch, or stylus
-- Stroke erasing and lasso selection
-- Notebooks, folders, pages, and continuous vertical page scrolling
-- Editable page titles and typed text
-- Automatic device-local saving
-- Color-coded Formula, Example, Definition, and custom categories
-- Exact-handwriting category compilation with source-page links
-- Responsive desktop and tablet layouts
+Your next formula sheet is already somewhere in your notebook.
 
-Lasso any ink, add it to a category, and compile that category into a normal Scribbly page. The compiled result keeps the user's original pen strokes and remains erasable and selectable.
+1. **Lasso** the handwriting you want to keep.
+2. **Categorize** it: formulas, examples, definitions, or something entirely your own.
+3. **Compile** your category into a fresh sheet.
 
-## Run Scribbly locally
+Same handwriting. Same pen strokes. Just gathered in one place. Move it, erase it, write around it, or use **Go to original** to jump back to its source.
 
-You will need Node.js 22 or later and pnpm.
+You choose what belongs together—no AI guessing required.
+
+## 📸 Photo → Handwriting
+
+Snap the board. Grab a scan. Drop in a screenshot.
+
+Choose **Image**, upload or paste a JPG, PNG, or WebP, then tap **Add handwriting to notebook**. Scribbly recognizes the writing and turns it into handwriting-style pen paths right on your pages.
+
+- Erase part of a letter, not just a whole text box.
+- Lasso, move, and categorize the ink.
+- Write over it and make it yours.
+- Keep the source photo on a separate page for reference.
+
+Long transcriptions continue across new pages. This creates **Scribbly-style handwriting**, not an exact copy of the handwriting in the photo. Recognition can misread words or equations, and diagrams aren't recreated—give the result a quick check!
+
+## 📓 Still a notebook at heart
+
+Pen and highlighter. Blank, lined, and grid paper. Notebooks and folders. Pages that scroll together. Undo for ink edits. A welcome page that introduces the two key features, followed by blank pages ready for you.
+
+Made for writing with a stylus, with mouse and touch support too. Page titles stay editable; the optional Text tool turns its input into ink when you leave the text box.
+
+## Try it out
+
+**[Open the earlier Scribbly demo →](https://scribbly-notes.fpibul.chatgpt.site)**
+
+The public demo is an older version. The latest photo-to-handwriting flow and welcome-page updates are in this repository and the local preview, not yet published to that demo.
+
+### Run the latest version locally
+
+You'll need Node.js 22 or later and pnpm. Download or clone this repository, then run these commands in its folder:
 
 ```bash
 pnpm install
 pnpm dev
 ```
 
-Then open `http://localhost:3000`.
+Open [localhost:3000](http://localhost:3000) and start scribbling.
 
-## Create a production build
+Drawing and category compilation don't need an API key. To enable photo recognition, copy `.env.example` to `.env.local` and privately fill in `OPENAI_API_KEY`. Never commit or share that file.
+
+### Build and check
 
 ```bash
 pnpm build
+pnpm exec tsc --noEmit
 ```
 
-## Current scope
+With Node.js 24, test ink tracing and partial erasing without making an API call:
 
-Notes are stored in the current browser. Accounts and cloud synchronization remain future work.
+```bash
+node scripts/test-ink.mjs
+```
 
-## Photo to editable notes
+## A few things to know
 
-In the local preview, choose **Image**, upload a JPG/PNG/WebP (or paste an image into the dialog), and select **Add handwriting to notebook**. The transcription becomes connected native pen paths automatically, with no keyboard or text-box step. Use Eraser to remove part of a letter, Lasso to move or categorize ink, and the pen to write over it. Undo restores an eraser gesture. Long results continue across new pages. The resized source photo is retained on a separate page with a source link. Existing note text also migrates to ink on reload for uniform partial erasing. The Text tool is temporary entry only: leaving a text box commits it as ink. Page titles remain separate from the ink surface.
+- **Your browser holds your notes.** Saving is device-local, not cloud sync. Clearing browser data can remove your notebooks. Accounts and cross-device syncing aren't available yet.
+- **Photos use AI; compilation doesn't.** Photo recognition sends the selected image to OpenAI and uses separately billed API credits. Requests use `store: false`.
+- **Photo recognition stays owner-only when hosted.** Set `OCR_OWNER_EMAIL` to match the trusted Sites sign-in email and configure `OPENAI_API_KEY` as a server-side secret. Without owner configuration, hosted recognition is blocked; anonymous visitors cannot convert photos. The localhost bypass is development-only.
+- **Storage has limits.** If Scribbly warns that storage is full, remove unneeded source-photo pages before closing.
+- **No keys ship with this repository.** Local credentials and hosted runtime secrets must be configured separately.
 
-Copy `.env.example` to `.env.local` and privately set `OPENAI_API_KEY`. Recognition sends the selected image to OpenAI and uses separately billed API credits. The server uses `store: false`. Recognition may misread handwriting or equations; diagrams are not converted into drawing objects. Output uses Scribbly's font-derived handwriting, not the source writer's exact strokes. The connected paths are obtained by thinning the rendered glyph mask and tracing its centerlines. Run `node scripts/test-ink.mjs` with Node 24 to check tracing and partial-erasure geometry without an API call.
+## Under the pen
 
-Hosted recognition fails closed unless `OCR_OWNER_EMAIL` matches the trusted Sites authenticated-user email. Set that value and `OPENAI_API_KEY` as hosted runtime settings (the API key must be a secret), then deploy. Anonymous visitors cannot convert photos. The development-only bypass is compiled out of production. A GitHub checkout does not contain these credentials.
-
-Images and notes use device-local storage. If storage fills, Scribbly shows an explicit warning; remove unneeded source-photo pages before closing. The public deployment may lag behind this branch while owner access is being configured.
+Photo handwriting uses the bundled Caveat font. Scribbly thins rendered letters and traces their centerlines into connected native pen paths, so generated writing and hand-drawn ink can share the eraser and lasso. The font includes its own open-source license.
 
 ## License
 
-This prototype is available under the MIT License.
+Scribbly is an MIT-licensed prototype. Make something lovely with it. ✨
