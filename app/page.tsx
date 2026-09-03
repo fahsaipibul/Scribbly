@@ -454,17 +454,11 @@ export default function Home() {
 
 function WelcomeGuide() {
   return <div className="welcome-guide">
-    <p className="welcome-intro">Your notebook, your handwriting.<br />A quick guide before you start.</p>
+    <p className="welcome-intro">Your notebook, your handwriting.<br />Two ways to do more with your notes.</p>
     <ol>
-      <li><h3>Write & highlight</h3><p>Choose Pen to write with your stylus. Use Highlight to mark something important.</p></li>
-      <li><h3>Erase just a little</h3><p>The Eraser removes only the ink it touches — from your writing and imported notes. Undo restores an accidental erase.</p></li>
-      <li><h3>Lasso & move</h3><p>Draw a loop around your ink, then drag inside the selection to move it. Tap outside to select something else.</p></li>
-      <li><h3>Collect your favourites</h3><p>Lasso some ink and tap Add to category. Choose Formula, Example, Definition, or create your own colour-coded category.</p></li>
-      <li><h3>Compile a sheet</h3><p>Tap Compile and choose a category. Scribbly copies its tagged ink into a new sheet and keeps a Go to original link.</p></li>
-      <li><h3>Photo → handwriting</h3><p>Tap Image, choose a board photo or scan, then Add handwriting to notebook. The result is ink you can erase, move and write over. Check it against the saved source photo.</p></li>
-      <li><h3>Make room for more</h3><p>Add pages with + and scroll down through your notebook. All notes shows your notebooks; Folders groups them together.</p></li>
+      <li><h3>Compile</h3><p>Turn scattered notes into a sheet of formulas, examples, definitions — or any category you create.</p><p>Lasso your writing → Add to category → Compile. Your original handwriting is copied onto a new sheet, with a link back to the source page.</p></li>
+      <li><h3>Photo → handwriting</h3><p>Bring a board photo, scanned page or screenshot into your notebook as handwriting-style ink.</p><p>Tap Image → choose your photo → Add handwriting to notebook. Erase parts, lasso and move it, or write over it. Your source photo stays available for checking.</p></li>
     </ol>
-    <p className="welcome-footer">Your notes save in this browser on this device, not to the cloud. The next pages are yours to fill.</p>
   </div>;
 }
 
