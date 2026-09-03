@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   ChevronDown, CircleUserRound, Eraser, Folder, FolderOpen, Grid2X2,
   Highlighter, ImagePlus, LassoSelect, Menu, MousePointer2, PenLine,
@@ -39,8 +39,6 @@ const starterNotebooks: Notebook[] = [
 ];
 
 export default function Home() {
-  const svgRef = useRef<SVGSVGElement>(null);
-  const paperRef = useRef<HTMLElement>(null);
   const [notebooks, setNotebooks] = useState<Notebook[]>(starterNotebooks);
   const [activeNotebookId, setActiveNotebookId] = useState(1);
   const [activeId, setActiveId] = useState(1);
@@ -75,11 +73,12 @@ export default function Home() {
     try {
       const saved = localStorage.getItem('scribbly-workspace-v3');
       if (!saved) return;
-      const data = JSON.parse(saved) as { notebooks?: Notebook[]; strokes?: Record<number, Stroke[]>; text?: Record<number, TextBox[]>; sources?: Record<number, Array<{ pageId:number; label:string }>>; categories?:Category[]; taggedBlocks?:TaggedBlock[]; handwritingVersion?: number };
+      const data = JSON.parse(saved) as { notebooks?: Notebook[]; strokes?: Record<number, Stroke[]>; text?: Record<number, TextBox[]>; sources?: Record<number, Array<{ pageId:number; label:string }>>; categories?:Category[]; taggedBlocks?:TaggedBlock[]; handwritingVersion?: number; cleanCompiledTitles?:boolean };
       if (data.notebooks?.length) setNotebooks(data.notebooks);
       if (data.strokes) {
         const migrated = { ...data.strokes };
         if (data.handwritingVersion !== 2) data.notebooks?.flatMap((book)=>book.pages).filter((page)=>page.compiled).forEach((page)=>{ migrated[page.id]=createCompiledInk('formulas'); });
+        if (!data.cleanCompiledTitles) data.notebooks?.flatMap((book)=>book.pages).filter((page)=>page.compiled).forEach((page)=>{ migrated[page.id]=(migrated[page.id]??[]).filter((stroke)=>!stroke.points.length||!stroke.points.every((sample)=>sample.y<132)); });
         setStrokesByPage(migrated);
       }
       if (data.text) setTextByPage(data.text);
@@ -92,7 +91,7 @@ export default function Home() {
 
   useEffect(() => {
     if (!hydrated) return;
-    localStorage.setItem('scribbly-workspace-v3', JSON.stringify({ notebooks, strokes: strokesByPage, text: textByPage, sources: compiledSources, categories, taggedBlocks, handwritingVersion:2 }));
+    localStorage.setItem('scribbly-workspace-v3', JSON.stringify({ notebooks, strokes: strokesByPage, text: textByPage, sources: compiledSources, categories, taggedBlocks, handwritingVersion:2, cleanCompiledTitles:true }));
   }, [hydrated, notebooks, strokesByPage, textByPage, compiledSources, categories, taggedBlocks]);
 
   useEffect(() => {
@@ -114,7 +113,7 @@ export default function Home() {
   }
 
   function point(event: React.PointerEvent<SVGSVGElement>) {
-    const rect = svgRef.current!.getBoundingClientRect();
+    const rect = event.currentTarget.getBoundingClientRect();
     return { x: event.clientX - rect.left, y: event.clientY - rect.top };
   }
 
@@ -192,9 +191,10 @@ export default function Home() {
   function renameActive(label: string) { updatePages((current) => current.map((page) => page.id === activeId ? { ...page, label } : page)); }
   function finishRename(label: string) { renameActive(label.trim() || 'Untitled page'); }
 
-  function addText(event: React.MouseEvent<HTMLElement>) {
-    if (tool !== 'text' || !paperRef.current) return;
-    const rect = paperRef.current.getBoundingClientRect();
+  function addText(event: React.MouseEvent<HTMLElement>, pageId: number) {
+    if (pageId !== activeId) { setActiveId(pageId); return; }
+    if (tool !== 'text') return;
+    const rect = event.currentTarget.getBoundingClientRect();
     const item = { id: Date.now(), x: event.clientX - rect.left, y: event.clientY - rect.top, text: 'Type here' };
     setTextByPage((current) => ({ ...current, [activeId]: [...(current[activeId] ?? []), item] })); setTool('select');
   }
@@ -202,7 +202,9 @@ export default function Home() {
 
   function openNotebook(id: number, pageId?: number) {
     const book = notebooks.find((item) => item.id === id); if (!book) return;
-    setActiveNotebookId(id); setActiveId(pageId ?? book.pages[0]?.id); setView('notebook'); setSelection([]); setSelectionBounds(null);
+    const nextPageId=pageId??book.pages[0]?.id;
+    setActiveNotebookId(id); setActiveId(nextPageId); setView('notebook'); setSelection([]); setSelectionBounds(null);
+    window.setTimeout(()=>document.getElementById(`paper-${nextPageId}`)?.scrollIntoView({behavior:'smooth',block:'start'}),50);
   }
 
   function addNotebook() {
@@ -251,7 +253,7 @@ export default function Home() {
     const blocks = taggedBlocks.filter((block)=>block.notebookId===activeNotebookId && block.categoryId===categoryId);
     if (!category || !blocks.length) { showNotice(`No ${category?.name ?? 'category'} selections yet`); return; }
     const id = Date.now();
-    const output: Stroke[] = [...writeInk(`${category.name} sheet`,62,64,3.8,'#24322f',2.7,620)];
+    const output: Stroke[] = [];
     let cursorY = 145;
     for (const block of blocks) {
       const points = block.strokes.flatMap((stroke)=>stroke.points);
@@ -366,8 +368,6 @@ export default function Home() {
     setActiveId(id); setTool('pen'); setView('notebook'); setCompileOpen(false); showNotice('Handwritten compilation created');
   }
 
-  const allStrokes = draft ? [...strokes, draft] : strokes;
-
   return <main className="app-shell">
     <header className="topbar">
       <div className="brand-group"><button className="icon-button mobile-menu" aria-label="Open menu"><Menu /></button><div className="brand-mark"><PenLine /></div><span className="brand-name">scribbly</span></div>
@@ -410,17 +410,17 @@ export default function Home() {
           <span className="tool-divider" /><button className="color-dot" aria-label="Ink color" /><button className="weight-button" aria-label="Pen size"><span /></button><span className="toolbar-spacer" />
           <button className="icon-button compact" aria-label="Undo" onClick={undo}><Undo2 /></button><button className="icon-button compact" aria-label="Redo" disabled><Redo2 /></button><button className="compile-button" onClick={() => setCompileOpen(true)}><Sparkles />Compile <span>Categories</span></button>
         </div>
-        <div className="desk"><article ref={paperRef} className={`paper squared-paper paper-tool-${tool}`} onClick={addText}>
-          {!activePage?.compiled && <div className="paper-content"><p className="hand date">September 2</p><h2 className="hand editable-paper-title" contentEditable suppressContentEditableWarning onBlur={(event) => finishRename(event.currentTarget.textContent ?? '')}>{activePage?.label}</h2><div className="hand underline" />{activeId === 1 ? <><p className="hand note">A limit describes the value a function approaches<br />as the input gets closer to some value.</p><div className="formula-card hand"><span className="formula-label">Definition</span><strong>lim&nbsp; f(x) = L</strong><small>x → a</small></div><p className="hand ex"><b>EX</b>&nbsp;&nbsp; Find the limit:</p><p className="hand equation">lim&nbsp; (x² − 4) / (x − 2) = 4</p></> : <p className="hand empty-hint">Pick up the pen and make this page yours.</p>}</div>}
-          {activePage?.compiled && compiledSources[activeId]?.length > 0 && <button className="source-chip" onClick={() => openNotebook(activeNotebookId, compiledSources[activeId][0].pageId)}>↗ Go to original: {compiledSources[activeId][0].label}</button>}
-          {(textByPage[activeId] ?? []).map((item) => <div key={item.id} className="canvas-text" style={{ left:item.x, top:item.y }} contentEditable suppressContentEditableWarning onPointerDown={(event) => event.stopPropagation()} onClick={(event) => event.stopPropagation()} onBlur={(event) => editText(item.id, event.currentTarget.textContent ?? '')}>{item.text}</div>)}
-          <svg ref={svgRef} className={`ink-layer tool-${tool}`} onPointerDown={startStroke} onPointerMove={moveStroke} onPointerUp={endStroke} onPointerCancel={endStroke}>
-            {taggedBlocks.filter((block)=>block.pageId===activeId).map((block)=>{ const category=categories.find((item)=>item.id===block.categoryId); return category?<g className="category-marker" key={block.id}><circle cx={Math.max(14,block.bounds.x-12)} cy={block.bounds.y+8} r="6" fill={category.color}/><text x={Math.max(25,block.bounds.x)} y={block.bounds.y+12} fill={category.color}>{category.name}</text></g>:null; })}
-            {allStrokes.map((stroke,index) => <polyline key={index} className={selection.includes(index) ? 'selected-stroke' : ''} points={stroke.points.map((p)=>`${p.x},${p.y}`).join(' ')} fill="none" stroke={stroke.color} strokeWidth={stroke.width} strokeLinecap="round" strokeLinejoin="round" opacity={stroke.width>10?.45:1} />)}
-            {lasso.length > 1 && <polyline className="lasso-path" points={lasso.map((p)=>`${p.x},${p.y}`).join(' ')} fill="rgba(92,126,112,.06)" />}
-            {selectionBounds && <rect className="selection-box" x={selectionBounds.x} y={selectionBounds.y} width={selectionBounds.width} height={selectionBounds.height} rx="8" />}
+        <div className="desk page-stack">{pages.map((page,pageIndex)=>{ const isActive=page.id===activeId; const pageInk=strokesByPage[page.id]??[]; const renderedInk=isActive&&draft?[...pageInk,draft]:pageInk; return <article id={`paper-${page.id}`} key={page.id} className={`paper squared-paper paper-tool-${isActive?tool:'inactive'} ${isActive?'active-paper':''}`} onClick={(event)=>addText(event,page.id)}>
+          <div className={`paper-content ${page.compiled?'compiled-paper-heading':''}`}><p className="hand date">Page {pageIndex+1}</p><h2 className="editable-paper-title" contentEditable={isActive} suppressContentEditableWarning onBlur={(event)=>{if(isActive)finishRename(event.currentTarget.textContent??'');}}>{page.label}</h2><div className="underline" />{!page.compiled&&(page.id===1?<><p className="hand note">A limit describes the value a function approaches<br />as the input gets closer to some value.</p><div className="formula-card hand"><span className="formula-label">Definition</span><strong>lim&nbsp; f(x) = L</strong><small>x → a</small></div><p className="hand ex"><b>EX</b>&nbsp;&nbsp; Find the limit:</p><p className="hand equation">lim&nbsp; (x² − 4) / (x − 2) = 4</p></>:<p className="hand empty-hint">Pick up the pen and make this page yours.</p>)}</div>
+          {page.compiled&&compiledSources[page.id]?.length>0&&<button className="source-chip" onClick={(event)=>{event.stopPropagation();openNotebook(activeNotebookId,compiledSources[page.id][0].pageId);}}>↗ Go to original: {compiledSources[page.id][0].label}</button>}
+          {(textByPage[page.id]??[]).map((item)=><div key={item.id} className="canvas-text" style={{left:item.x,top:item.y}} contentEditable={isActive} suppressContentEditableWarning onPointerDown={(event)=>event.stopPropagation()} onClick={(event)=>event.stopPropagation()} onBlur={(event)=>{if(isActive)editText(item.id,event.currentTarget.textContent??'');}}>{item.text}</div>)}
+          <svg className={`ink-layer tool-${isActive?tool:'inactive'}`} onPointerDown={isActive?startStroke:undefined} onPointerMove={isActive?moveStroke:undefined} onPointerUp={isActive?endStroke:undefined} onPointerCancel={isActive?endStroke:undefined}>
+            {taggedBlocks.filter((block)=>block.pageId===page.id).map((block)=>{const category=categories.find((item)=>item.id===block.categoryId);return category?<g className="category-marker" key={block.id}><circle cx={Math.max(14,block.bounds.x-12)} cy={block.bounds.y+8} r="6" fill={category.color}/><text x={Math.max(25,block.bounds.x)} y={block.bounds.y+12} fill={category.color}>{category.name}</text></g>:null;})}
+            {renderedInk.map((stroke,index)=><polyline key={index} className={isActive&&selection.includes(index)?'selected-stroke':''} points={stroke.points.map((sample)=>`${sample.x},${sample.y}`).join(' ')} fill="none" stroke={stroke.color} strokeWidth={stroke.width} strokeLinecap="round" strokeLinejoin="round" opacity={stroke.width>10?.45:1}/>)}
+            {isActive&&lasso.length>1&&<polyline className="lasso-path" points={lasso.map((sample)=>`${sample.x},${sample.y}`).join(' ')} fill="rgba(92,126,112,.06)"/>}
+            {isActive&&selectionBounds&&<rect className="selection-box" x={selectionBounds.x} y={selectionBounds.y} width={selectionBounds.width} height={selectionBounds.height} rx="8"/>}
           </svg>
-        </article></div>
+        </article>;})}</div>
       </section>}
     </div>
     {tagOpen && <div className="compile-overlay" role="dialog" aria-modal="true" aria-label="Add to category"><div className="compile-dialog category-dialog"><div className="compile-dialog-icon"><Tag /></div><h2>Add selection to a category</h2><p>The selected ink will keep its exact handwriting when compiled.</p><div className="category-grid">{categories.map((category)=><button key={category.id} onClick={()=>tagSelection(category.id)}><span style={{background:category.color}} />{category.name}</button>)}</div><div className="new-category"><input value={newCategoryName} onChange={(event)=>setNewCategoryName(event.target.value)} onKeyDown={(event)=>{if(event.key==='Enter')addCategory();}} placeholder="Create your own category" autoFocus/><button onClick={addCategory} disabled={!newCategoryName.trim()}><Plus />Create</button></div><div className="compile-actions"><button onClick={()=>setTagOpen(false)}>Cancel</button></div></div></div>}
