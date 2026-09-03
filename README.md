@@ -1,6 +1,6 @@
 # Scribbly
 
-Scribbly is a tablet-friendly notebook for handwritten notes that can be organized into new, fully editable sheets.
+Ever take notes in class and end up with formulas, examples, definitions, and key points all jumbled together? Scribbly lets you write naturally first, then categorize selected handwriting and compile it into formula sheets, problem sets, and any custom collection you need.
 
 ## Try Scribbly
 
