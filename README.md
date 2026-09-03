@@ -1,6 +1,6 @@
-# Scribbly ✍️
+# Scribbly
 
-### Messy notes. Your handwriting. A little magic.
+### Turn Disorganized Scribbles into productive notes
 
 For the formulas hiding between doodles, the examples scattered across lectures, and the board you photographed before it disappeared.
 
