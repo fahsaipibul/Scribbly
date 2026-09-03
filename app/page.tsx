@@ -126,9 +126,10 @@ export default function Home() {
     return inside;
   }
 
-  function insertPhotoNotes(text: string, image: string) {
+  async function insertPhotoNotes(text: string, image: string) {
+    await document.fonts.load('500 22px ScribblyHand');
     const ctx = document.createElement('canvas').getContext('2d');
-    if (ctx) ctx.font = "18px 'Comic Sans MS', 'Bradley Hand', cursive";
+    if (ctx) ctx.font = "500 22px ScribblyHand";
     const maxWidth = Math.max(100, (document.getElementById(`paper-${activeId}`)?.clientWidth ?? 720)-150);
     const lines: string[] = [];
     for (const original of text.split(/\r?\n/).filter(line=>line.trim())) {

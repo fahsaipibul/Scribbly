@@ -59,5 +59,7 @@ button:focus-visible { outline:3px solid rgba(73,97,88,.24); outline-offset:2px;
 .photo-error,.storage-error { color:#9c3328; background:#fff0e9; padding:10px; border-radius:8px; }
 .storage-error { position:fixed; bottom:10px; left:20px; right:20px; z-index:60; }
 .source-photo { position:absolute; top:115px; left:6%; width:88%; max-height:880px; object-fit:contain; pointer-events:none; }
-.canvas-text { min-width:20px; white-space:pre; line-height:22px; }
+@font-face { font-family:'ScribblyHand'; src:url('/fonts/caveat.ttf') format('truetype'); font-style:normal; font-weight:400 700; font-display:swap; }
+.canvas-text { min-width:20px; white-space:pre; font:500 22px/20px 'ScribblyHand',cursive; }
+.photo-dialog textarea { font:500 22px/1.4 'ScribblyHand',cursive; }
 .selected-text { outline:1px dashed #4e7b69; background:#edf5ed; }
