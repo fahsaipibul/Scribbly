@@ -1,11 +1,12 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   ChevronDown, CircleUserRound, Eraser, Folder, FolderOpen, Grid2X2,
   Highlighter, ImagePlus, LassoSelect, Menu, MousePointer2, PenLine,
   Plus, Redo2, Search, Sparkles, Tag, Trash2, Type, Undo2,
 } from 'lucide-react';
+import { eraseInk, handwritingInk } from '@/lib/photo-ink';
 import { PhotoImport } from '@/components/photo-import';
 import { createCompiledInk } from '@/lib/handwriting';
 
@@ -62,6 +63,8 @@ export default function Home() {
   const [categories, setCategories] = useState<Category[]>(starterCategories);
   const [taggedBlocks, setTaggedBlocks] = useState<TaggedBlock[]>([]);
   const [newCategoryName, setNewCategoryName] = useState('');
+  const eraserPoint = useRef<Point | null>(null);
+  const inkHistory = useRef<Record<number, Stroke[][]>>({});
   const [hydrated, setHydrated] = useState(false);
 
   const activeNotebook = notebooks.find((book) => book.id === activeNotebookId) ?? notebooks[0];
@@ -70,10 +73,25 @@ export default function Home() {
   const strokes = strokesByPage[activeId] ?? [];
 
   useEffect(() => {
-    try {
+    let cancelled=false;
+    void (async()=>{try {
       const saved = localStorage.getItem('scribbly-workspace-v3');
       if (!saved) return;
       const data = JSON.parse(saved) as { notebooks?: Notebook[]; strokes?: Record<number, Stroke[]>; text?: Record<number, TextBox[]>; sources?: Record<number, Array<{ pageId:number; label:string }>>; categories?:Category[]; taggedBlocks?:TaggedBlock[]; handwritingVersion?: number; cleanCompiledTitles?:boolean };
+      const allPages=data.notebooks?.flatMap(book=>book.pages)??[];
+      const photoPages=allPages.filter(page=>(data.text?.[page.id]?.length??0)>0&&(data.sources?.[page.id]??[]).some(source=>allPages.some(p=>p.id===source.pageId&&p.sourceImage)));
+      if(photoPages.length) {
+        try {
+        await document.fonts.load('500 22px ScribblyHand');
+        if(cancelled) return;
+        data.strokes??={};
+        for(const page of photoPages) {
+          const ink=(data.text?.[page.id]??[]).flatMap(line=>handwritingInk(line.text,line.x,line.y));
+          data.strokes[page.id]=[...(data.strokes[page.id]??[]),...ink];
+          delete data.text![page.id];
+        }
+        } catch { setNotice('Handwriting could not load. Existing notes have been kept; refresh to retry.'); }
+      }
       if (data.notebooks?.length) setNotebooks(data.notebooks);
       if (data.strokes) {
         const migrated = { ...data.strokes };
@@ -86,7 +104,8 @@ export default function Home() {
       if (data.categories?.length) setCategories(data.categories);
       if (data.taggedBlocks) setTaggedBlocks(data.taggedBlocks);
     } catch { /* keep starter workspace */ }
-    finally { setHydrated(true); }
+    finally { if(!cancelled)setHydrated(true); }})();
+    return ()=>{cancelled=true;};
   }, []);
 
   useEffect(() => {
@@ -140,20 +159,20 @@ export default function Home() {
       }
       if (line) lines.push(line);
     }
-    const id=Date.now(), newPages: NotePage[]=[], newText: Record<number,TextBox[]>={};
+    const id=Date.now(), newPages: NotePage[]=[], newInk: Record<number,Stroke[]>={};
     for(let i=0;i<lines.length;i+=29) {
       const pageId=id+i+1;
       newPages.push({id:pageId,label:i ? 'Photo notes (continued)' : 'Photo notes',tone:'mint',compiled:true});
-      newText[pageId]=lines.slice(i,i+29).map((text,index)=>({id:pageId+index+1,x:70,y:120+index*30,text}));
+      newInk[pageId]=lines.slice(i,i+29).flatMap((text,index)=>handwritingInk(text,70,120+index*30));
     }
     if(!newPages.length) return;
     newPages.push({id,label:'Source photo',tone:'blue',sourceImage:image});
     updatePages(current=>[...current,...newPages]);
-    setTextByPage(current=>({...current,...newText}));
+    setStrokesByPage(current=>({...current,...newInk}));
     setCompiledSources(current=>({...current,...Object.fromEntries(newPages.filter(p=>p.id!==id).map(p=>[p.id,[{pageId:id,label:'Source photo'}]]))}));
-    setActiveId(newPages[0].id); setTool('select');
+    setActiveId(newPages[0].id); setTool('pen');
     window.setTimeout(()=>document.getElementById(`paper-${newPages[0].id}`)?.scrollIntoView({behavior:'smooth',block:'start'}),100);
-    showNotice('Notes added. Select to edit, erase a line, or lasso to move.');
+    showNotice('Handwriting added. Erase part of a letter, lasso, or write over it.');
   }
 
   function updatePages(updater: (current: NotePage[]) => NotePage[]) {
@@ -170,14 +189,19 @@ export default function Home() {
   }
 
   function boundsFor(points: Point[]): Bounds {
-    const xs = points.map((p) => p.x), ys = points.map((p) => p.y);
-    const x = Math.min(...xs), y = Math.min(...ys);
-    return { x, y, width: Math.max(...xs) - x, height: Math.max(...ys) - y };
+    let x=Infinity,y=Infinity,right=-Infinity,bottom=-Infinity;
+    for(const p of points){x=Math.min(x,p.x);y=Math.min(y,p.y);right=Math.max(right,p.x);bottom=Math.max(bottom,p.y);}
+    return { x, y, width:right-x, height:bottom-y };
   }
 
   function startStroke(event: React.PointerEvent<SVGSVGElement>) {
     const cursor = point(event);
+    if(!hydrated)return;
     event.currentTarget.setPointerCapture(event.pointerId);
+    if(tool==='pen'||tool==='highlighter'||tool==='eraser') {
+      inkHistory.current[activeId]=[...(inkHistory.current[activeId]??[]).slice(-19),strokes];
+    }
+    eraserPoint.current=null;
     if (tool === 'eraser') { eraseAt(cursor); return; }
     if (tool === 'lasso') {
       if (selectionBounds && inBounds(cursor, selectionBounds)) { setDragOrigin(cursor); return; }
@@ -228,12 +252,20 @@ export default function Home() {
     }
     setLasso([]);
     setDragOrigin(null);
+    eraserPoint.current=null;
     if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
   }
 
   function eraseAt(cursor: Point) {
     setTextByPage(current=>({...current,[activeId]:(current[activeId]??[]).filter(item=>!inBounds(cursor,textBounds(item)))}));
-    setStrokesByPage((current) => ({ ...current, [activeId]: (current[activeId] ?? []).filter((stroke) => !stroke.points.some((sample) => Math.hypot(sample.x - cursor.x, sample.y - cursor.y) < stroke.width / 2 + 11)) }));
+    const previous=eraserPoint.current??cursor;
+    eraserPoint.current=cursor;
+    const steps=Math.max(1,Math.ceil(Math.hypot(cursor.x-previous.x,cursor.y-previous.y)/2));
+    setStrokesByPage(current=>{
+      let ink=current[activeId]??[];
+      for(let i=1;i<=steps;i++)ink=eraseInk(ink,{x:previous.x+(cursor.x-previous.x)*i/steps,y:previous.y+(cursor.y-previous.y)*i/steps});
+      return {...current,[activeId]:ink};
+    });
   }
 
   function deleteSelection() {
@@ -244,7 +276,8 @@ export default function Home() {
   }
 
   function undo() {
-    setStrokesByPage((current) => ({ ...current, [activeId]: (current[activeId] ?? []).slice(0, -1) }));
+    const previous=inkHistory.current[activeId]?.pop();
+    if(previous)setStrokesByPage(current=>({...current,[activeId]:previous}));
     setSelection([]); setSelectionBounds(null);
   }
 
