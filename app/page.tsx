@@ -79,7 +79,7 @@ export default function Home() {
       if (!saved) return;
       const data = JSON.parse(saved) as { notebooks?: Notebook[]; strokes?: Record<number, Stroke[]>; text?: Record<number, TextBox[]>; sources?: Record<number, Array<{ pageId:number; label:string }>>; categories?:Category[]; taggedBlocks?:TaggedBlock[]; handwritingVersion?: number; cleanCompiledTitles?:boolean };
       const allPages=data.notebooks?.flatMap(book=>book.pages)??[];
-      const photoPages=allPages.filter(page=>(data.text?.[page.id]?.length??0)>0&&(data.sources?.[page.id]??[]).some(source=>allPages.some(p=>p.id===source.pageId&&p.sourceImage)));
+      const photoPages=allPages.filter(page=>(data.text?.[page.id]?.length??0)>0);
       if(photoPages.length) {
         try {
         await document.fonts.load('500 22px ScribblyHand');
@@ -257,7 +257,6 @@ export default function Home() {
   }
 
   function eraseAt(cursor: Point) {
-    setTextByPage(current=>({...current,[activeId]:(current[activeId]??[]).filter(item=>!inBounds(cursor,textBounds(item)))}));
     const previous=eraserPoint.current??cursor;
     eraserPoint.current=cursor;
     const steps=Math.max(1,Math.ceil(Math.hypot(cursor.x-previous.x,cursor.y-previous.y)/2));
@@ -292,7 +291,17 @@ export default function Home() {
     const item = { id: Date.now(), x: event.clientX - rect.left, y: event.clientY - rect.top, text: 'Type here' };
     setTextByPage((current) => ({ ...current, [activeId]: [...(current[activeId] ?? []), item] })); setTool('select');
   }
-  function editText(id: number, text: string) { setTextByPage((current) => ({ ...current, [activeId]: (current[activeId] ?? []).map((item) => item.id === id ? { ...item, text } : item) })); }
+  async function editText(id: number, text: string) {
+    const item=(textByPage[activeId]??[]).find(item=>item.id===id);
+    if(!item)return;
+    // Text entry is only a temporary input; finished note content is always ink.
+    try {
+      await document.fonts.load('500 22px ScribblyHand');
+      const ink=handwritingInk(text,item.x,item.y);
+      setStrokesByPage(current=>({...current,[activeId]:[...(current[activeId]??[]),...ink]}));
+      setTextByPage(current=>({...current,[activeId]:(current[activeId]??[]).filter(item=>item.id!==id)}));
+    } catch { showNotice('Could not make ink yet. Please try again.'); }
+  }
 
   function openNotebook(id: number, pageId?: number) {
     const book = notebooks.find((item) => item.id === id); if (!book) return;
