@@ -51,3 +51,13 @@ button:focus-visible { outline:3px solid rgba(73,97,88,.24); outline-offset:2px;
 .new-category button:disabled { opacity:.45; }
 .new-category svg { width:13px; }
 @media (max-width:700px) { .category-grid { grid-template-columns:1fr; } .tag-selection { padding:0 7px; } }
+/* Editable photo notes share the paper's existing coordinate system. */
+.photo-dialog { background:#fffefa; color:#273a33; width:min(620px,calc(100vw - 32px)); max-width:620px; max-height:90vh; overflow:auto; padding:26px; }
+.photo-dialog textarea { width:100%; border:1px solid #b8c9c0; padding:12px; border-radius:8px; resize:vertical; font:16px/1.5 sans-serif; }
+.photo-preview { width:100%; max-height:240px; object-fit:contain; border-radius:8px; background:#eee; }
+.photo-privacy { font-size:12px; color:#66756c; }
+.photo-error,.storage-error { color:#9c3328; background:#fff0e9; padding:10px; border-radius:8px; }
+.storage-error { position:fixed; bottom:10px; left:20px; right:20px; z-index:60; }
+.source-photo { position:absolute; top:115px; left:6%; width:88%; max-height:880px; object-fit:contain; pointer-events:none; }
+.canvas-text { min-width:20px; white-space:pre; line-height:22px; }
+.selected-text { outline:1px dashed #4e7b69; background:#edf5ed; }

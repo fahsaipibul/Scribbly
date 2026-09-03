@@ -6,12 +6,13 @@ import {
   Highlighter, ImagePlus, LassoSelect, Menu, MousePointer2, PenLine,
   Plus, Redo2, Search, Sparkles, Tag, Trash2, Type, Undo2,
 } from 'lucide-react';
-import { createCompiledInk, writeInk } from '@/lib/handwriting';
+import { PhotoImport } from '@/components/photo-import';
+import { createCompiledInk } from '@/lib/handwriting';
 
 type Point = { x: number; y: number };
 type Stroke = { points: Point[]; color: string; width: number };
 type TextBox = { id: number; x: number; y: number; text: string };
-type NotePage = { id: number; label: string; tone: string; compiled?: boolean };
+type NotePage = { id: number; label: string; tone: string; compiled?: boolean; sourceImage?: string };
 type Notebook = { id: number; name: string; color: string; folder: string; pages: NotePage[] };
 type Bounds = { x: number; y: number; width: number; height: number };
 type Category = { id: string; name: string; color: string };
@@ -46,6 +47,9 @@ export default function Home() {
   const [tool, setTool] = useState('pen');
   const [strokesByPage, setStrokesByPage] = useState<Record<number, Stroke[]>>({});
   const [textByPage, setTextByPage] = useState<Record<number, TextBox[]>>({});
+  const [photoOpen, setPhotoOpen] = useState(false);
+  const [textSelection, setTextSelection] = useState<number[]>([]);
+  const [saveError, setSaveError] = useState(false);
   const [draft, setDraft] = useState<Stroke | null>(null);
   const [lasso, setLasso] = useState<Point[]>([]);
   const [selection, setSelection] = useState<number[]>([]);
@@ -87,7 +91,7 @@ export default function Home() {
 
   useEffect(() => {
     if (!hydrated) return;
-    localStorage.setItem('scribbly-workspace-v3', JSON.stringify({ notebooks, strokes: strokesByPage, text: textByPage, sources: compiledSources, categories, taggedBlocks, handwritingVersion:2, cleanCompiledTitles:true }));
+    try { localStorage.setItem('scribbly-workspace-v3', JSON.stringify({ notebooks, strokes: strokesByPage, text: textByPage, sources: compiledSources, categories, taggedBlocks, handwritingVersion:2, cleanCompiledTitles:true })); setSaveError(false); } catch { setSaveError(true); }
   }, [hydrated, notebooks, strokesByPage, textByPage, compiledSources, categories, taggedBlocks]);
 
   useEffect(() => {
@@ -103,6 +107,53 @@ export default function Home() {
     }, { signal: lifecycle.signal })).catch(() => {});
     return () => lifecycle.abort();
   }, [notebooks, activeNotebookId]);
+
+  useEffect(() => {
+    setSelection([]); setTextSelection([]); setSelectionBounds(null); setLasso([]); setDragOrigin(null); setDraft(null);
+  }, [tool, activeId]);
+
+  function textBounds(item: TextBox): Bounds {
+    const element = document.getElementById(`note-text-${activeId}-${item.id}`);
+    return { x: item.x, y: item.y, width: element?.offsetWidth ?? 100, height: element?.offsetHeight ?? 30 };
+  }
+
+  function insidePolygon(p: Point, polygon: Point[]) {
+    let inside = false;
+    for (let i=0,j=polygon.length-1;i<polygon.length;j=i++) {
+      const a=polygon[i], b=polygon[j];
+      if ((a.y>p.y)!==(b.y>p.y) && p.x<(b.x-a.x)*(p.y-a.y)/(b.y-a.y)+a.x) inside=!inside;
+    }
+    return inside;
+  }
+
+  function insertPhotoNotes(text: string, image: string) {
+    const ctx = document.createElement('canvas').getContext('2d');
+    if (ctx) ctx.font = "18px 'Comic Sans MS', 'Bradley Hand', cursive";
+    const maxWidth = Math.max(100, (document.getElementById(`paper-${activeId}`)?.clientWidth ?? 720)-150);
+    const lines: string[] = [];
+    for (const original of text.split(/\r?\n/).filter(line=>line.trim())) {
+      let line = '';
+      for (const char of original) {
+        if (line && (ctx?.measureText(line+char).width ?? (line.length+1)*12)>maxWidth) { lines.push(line); line=''; }
+        line+=char;
+      }
+      if (line) lines.push(line);
+    }
+    const id=Date.now(), newPages: NotePage[]=[], newText: Record<number,TextBox[]>={};
+    for(let i=0;i<lines.length;i+=29) {
+      const pageId=id+i+1;
+      newPages.push({id:pageId,label:i ? 'Photo notes (continued)' : 'Photo notes',tone:'mint',compiled:true});
+      newText[pageId]=lines.slice(i,i+29).map((text,index)=>({id:pageId+index+1,x:70,y:120+index*30,text}));
+    }
+    if(!newPages.length) return;
+    newPages.push({id,label:'Source photo',tone:'blue',sourceImage:image});
+    updatePages(current=>[...current,...newPages]);
+    setTextByPage(current=>({...current,...newText}));
+    setCompiledSources(current=>({...current,...Object.fromEntries(newPages.filter(p=>p.id!==id).map(p=>[p.id,[{pageId:id,label:'Source photo'}]]))}));
+    setActiveId(newPages[0].id); setTool('select');
+    window.setTimeout(()=>document.getElementById(`paper-${newPages[0].id}`)?.scrollIntoView({behavior:'smooth',block:'start'}),100);
+    showNotice('Notes added. Select to edit, erase a line, or lasso to move.');
+  }
 
   function updatePages(updater: (current: NotePage[]) => NotePage[]) {
     setNotebooks((current) => current.map((book) => book.id === activeNotebookId ? { ...book, pages: updater(book.pages) } : book));
@@ -129,7 +180,7 @@ export default function Home() {
     if (tool === 'eraser') { eraseAt(cursor); return; }
     if (tool === 'lasso') {
       if (selectionBounds && inBounds(cursor, selectionBounds)) { setDragOrigin(cursor); return; }
-      setSelection([]); setSelectionBounds(null); setLasso([cursor]); return;
+      setSelection([]); setTextSelection([]); setSelectionBounds(null); setLasso([cursor]); return;
     }
     if (tool !== 'pen' && tool !== 'highlighter') return;
     setDraft({ points: [cursor], color: tool === 'highlighter' ? '#f7cb55' : '#24322f', width: tool === 'highlighter' ? 16 : 3 });
@@ -143,8 +194,11 @@ export default function Home() {
     }
     const cursor = point(event);
     if (tool === 'eraser') { eraseAt(cursor); return; }
-    if (tool === 'lasso' && dragOrigin && selection.length) {
-      const dx = cursor.x - dragOrigin.x, dy = cursor.y - dragOrigin.y;
+    if (tool === 'lasso' && dragOrigin && (selection.length || textSelection.length)) {
+      const b = selectionBounds;
+      const dx = b ? Math.max(-b.x, Math.min(event.currentTarget.clientWidth-b.x-b.width,cursor.x-dragOrigin.x)) : 0;
+      const dy = b ? Math.max(-b.y, Math.min(event.currentTarget.clientHeight-b.y-b.height,cursor.y-dragOrigin.y)) : 0;
+      setTextByPage(current=>({...current,[activeId]:(current[activeId]??[]).map(item=>textSelection.includes(item.id)?{...item,x:item.x+dx,y:item.y+dy}:item)}));
       setStrokesByPage((current) => ({ ...current, [activeId]: (current[activeId] ?? []).map((stroke, index) => selection.includes(index) ? { ...stroke, points: stroke.points.map((p) => ({ x: p.x + dx, y: p.y + dy })) } : stroke) }));
       setSelectionBounds((bounds) => bounds ? { ...bounds, x: bounds.x + dx, y: bounds.y + dy } : null);
       setDragOrigin(cursor); return;
@@ -159,10 +213,17 @@ export default function Home() {
       setDraft(null);
     }
     if (lasso.length > 2) {
-      const bounds = boundsFor(lasso);
-      const selected = strokes.map((stroke, index) => stroke.points.some((sample) => inBounds(sample, bounds)) ? index : -1).filter((index) => index >= 0);
-      setSelection(selected); setSelectionBounds(selected.length ? bounds : null);
-      if (!selected.length) showNotice('No ink inside the lasso');
+      const selected = strokes.map((stroke, index) => stroke.points.some((sample) => insidePolygon(sample, lasso)) ? index : -1).filter((index) => index >= 0);
+      const selectedText = (textByPage[activeId]??[]).filter(item=>{
+        const b=textBounds(item);
+        return insidePolygon({x:b.x+b.width/2,y:b.y+b.height/2},lasso) ||
+          [{x:b.x,y:b.y},{x:b.x+b.width,y:b.y},{x:b.x,y:b.y+b.height},{x:b.x+b.width,y:b.y+b.height}].some(p=>insidePolygon(p,lasso)) ||
+          lasso.some(p=>inBounds(p,b));
+      });
+      const points = [...strokes.filter((_,i)=>selected.includes(i)).flatMap(stroke=>stroke.points),...selectedText.flatMap(item=>{const b=textBounds(item);return [{x:b.x,y:b.y},{x:b.x+b.width,y:b.y+b.height}];})];
+      setSelection(selected); setTextSelection(selectedText.map(item=>item.id));
+      setSelectionBounds(points.length ? boundsFor(points) : null);
+      if (!points.length) showNotice('No notes inside the lasso');
     }
     setLasso([]);
     setDragOrigin(null);
@@ -170,12 +231,15 @@ export default function Home() {
   }
 
   function eraseAt(cursor: Point) {
+    setTextByPage(current=>({...current,[activeId]:(current[activeId]??[]).filter(item=>!inBounds(cursor,textBounds(item)))}));
     setStrokesByPage((current) => ({ ...current, [activeId]: (current[activeId] ?? []).filter((stroke) => !stroke.points.some((sample) => Math.hypot(sample.x - cursor.x, sample.y - cursor.y) < stroke.width / 2 + 11)) }));
   }
 
   function deleteSelection() {
+    setTextByPage(current=>({...current,[activeId]:(current[activeId]??[]).filter(item=>!textSelection.includes(item.id))}));
+    setTextSelection([]);
     setStrokesByPage((current) => ({ ...current, [activeId]: (current[activeId] ?? []).filter((_, index) => !selection.includes(index)) }));
-    setSelection([]); setSelectionBounds(null); showNotice('Selected ink deleted');
+    setSelection([]); setSelectionBounds(null); showNotice('Selected notes deleted');
   }
 
   function undo() {
@@ -299,22 +363,23 @@ export default function Home() {
       </aside>
 
       {view !== 'notebook' ? <CollectionView view={view} notebooks={notebooks} onOpen={openNotebook} onCreate={addNotebook} /> : <section className="editor-area">
-        <div className="editor-header"><div><span className="crumb">{activeNotebook?.name} / Notes</span><input className="editable-page-title" value={activePage?.label ?? ''} onChange={(event) => renameActive(event.target.value)} onBlur={(event) => finishRename(event.target.value)} aria-label="Page title" /></div><div className="save-state"><span />Saved just now</div></div>
+        <div className="editor-header"><div><span className="crumb">{activeNotebook?.name} / Notes</span><input className="editable-page-title" value={activePage?.label ?? ''} onChange={(event) => renameActive(event.target.value)} onBlur={(event) => finishRename(event.target.value)} aria-label="Page title" /></div><div className="save-state"><span />{saveError ? "Storage full — changes not saved" : "Saved on this device"}</div></div>
         <div className="toolbar" role="toolbar" aria-label="Note tools">
           <ToolButton label="Select" active={tool === 'select'} onClick={() => setTool('select')}><MousePointer2 /></ToolButton>
           <ToolButton label="Lasso" active={tool === 'lasso'} onClick={() => { setTool('lasso'); setSelection([]); setSelectionBounds(null); }}><LassoSelect /></ToolButton>
           {selection.length > 0 && <button className="tag-selection" onClick={()=>setTagOpen(true)}><Tag />Add to category</button>}
-          {selection.length > 0 && <button className="delete-selection" onClick={deleteSelection}><Trash2 />Delete selection</button>}
+          {(selection.length > 0 || textSelection.length > 0) && <button className="delete-selection" onClick={deleteSelection}><Trash2 />Delete selection</button>}
           <span className="tool-divider" />
-          <ToolButton label="Pen" active={tool === 'pen'} onClick={() => setTool('pen')}><PenLine /></ToolButton><ToolButton label="Highlight" active={tool === 'highlighter'} onClick={() => setTool('highlighter')}><Highlighter /></ToolButton><ToolButton label="Eraser" active={tool === 'eraser'} onClick={() => setTool('eraser')}><Eraser /></ToolButton><ToolButton label="Text" active={tool === 'text'} onClick={() => setTool('text')}><Type /></ToolButton><ToolButton label="Image" active={false} onClick={() => {}}><ImagePlus /></ToolButton>
+          <ToolButton label="Pen" active={tool === 'pen'} onClick={() => setTool('pen')}><PenLine /></ToolButton><ToolButton label="Highlight" active={tool === 'highlighter'} onClick={() => setTool('highlighter')}><Highlighter /></ToolButton><ToolButton label="Eraser" active={tool === 'eraser'} onClick={() => setTool('eraser')}><Eraser /></ToolButton><ToolButton label="Text" active={tool === 'text'} onClick={() => setTool('text')}><Type /></ToolButton><ToolButton label="Image" active={false} onClick={() => setPhotoOpen(true)}><ImagePlus /></ToolButton>
           <span className="tool-divider" /><button className="color-dot" aria-label="Ink color" /><button className="weight-button" aria-label="Pen size"><span /></button><span className="toolbar-spacer" />
           <button className="icon-button compact" aria-label="Undo" onClick={undo}><Undo2 /></button><button className="icon-button compact" aria-label="Redo" disabled><Redo2 /></button><button className="compile-button" onClick={() => setCompileOpen(true)}><Sparkles />Compile <span>Categories</span></button>
         </div>
         <div className="desk page-stack">{pages.map((page)=>{ const isActive=page.id===activeId; const pageInk=strokesByPage[page.id]??[]; const renderedInk=isActive&&draft?[...pageInk,draft]:pageInk; return <article id={`paper-${page.id}`} key={page.id} className={`paper squared-paper paper-tool-${isActive?tool:'inactive'} ${isActive?'active-paper':''}`} onClick={(event)=>addText(event,page.id)}>
           <div className={`paper-content ${page.compiled?'compiled-paper-heading':''}`}><h2 className="editable-paper-title" contentEditable={isActive} suppressContentEditableWarning onBlur={(event)=>{if(isActive)finishRename(event.currentTarget.textContent??'');}}>{page.label}</h2><div className="underline" />{!page.compiled&&page.id===1&&<><p className="hand note">A limit describes the value a function approaches<br />as the input gets closer to some value.</p><div className="formula-card hand"><span className="formula-label">Definition</span><strong>lim&nbsp; f(x) = L</strong><small>x → a</small></div><p className="hand ex"><b>EX</b>&nbsp;&nbsp; Find the limit:</p><p className="hand equation">lim&nbsp; (x² − 4) / (x − 2) = 4</p></>}</div>
           {page.compiled&&compiledSources[page.id]?.length>0&&<button className="source-chip" onClick={(event)=>{event.stopPropagation();openNotebook(activeNotebookId,compiledSources[page.id][0].pageId);}}>↗ Go to original: {compiledSources[page.id][0].label}</button>}
-          {(textByPage[page.id]??[]).map((item)=><div key={item.id} className="canvas-text" style={{left:item.x,top:item.y}} contentEditable={isActive} suppressContentEditableWarning onPointerDown={(event)=>event.stopPropagation()} onClick={(event)=>event.stopPropagation()} onBlur={(event)=>{if(isActive)editText(item.id,event.currentTarget.textContent??'');}}>{item.text}</div>)}
-          <svg className={`ink-layer tool-${isActive?tool:'inactive'}`} onPointerDown={isActive?startStroke:undefined} onPointerMove={isActive?moveStroke:undefined} onPointerUp={isActive?endStroke:undefined} onPointerCancel={isActive?endStroke:undefined}>
+          {page.sourceImage && <img className="source-photo" src={page.sourceImage} alt="Original uploaded notes" />}
+          {(textByPage[page.id]??[]).map((item)=><div id={`note-text-${page.id}-${item.id}`} key={item.id} className={`canvas-text ${isActive&&textSelection.includes(item.id)?'selected-text':''}`} style={{left:item.x,top:item.y,pointerEvents:isActive&&(tool==='select'||tool==='text')?'auto':'none'}} contentEditable={isActive&&(tool==='select'||tool==='text')} suppressContentEditableWarning onPointerDown={(event)=>event.stopPropagation()} onClick={(event)=>event.stopPropagation()} onBlur={(event)=>{if(isActive)editText(item.id,event.currentTarget.textContent??'');}}>{item.text}</div>)}
+          <svg className={`ink-layer tool-${isActive?tool:'inactive'}`} onPointerDown={isActive?startStroke:undefined} onPointerMove={isActive?moveStroke:undefined} onPointerUp={isActive?endStroke:undefined} onPointerCancel={()=>{setDraft(null);setLasso([]);setDragOrigin(null);}} onLostPointerCapture={()=>{setDraft(null);setLasso([]);setDragOrigin(null);}}>
             {taggedBlocks.filter((block)=>block.pageId===page.id).map((block)=>{const category=categories.find((item)=>item.id===block.categoryId);return category?<g className="category-marker" key={block.id}><circle cx={Math.max(14,block.bounds.x-12)} cy={block.bounds.y+8} r="6" fill={category.color}/><text x={Math.max(25,block.bounds.x)} y={block.bounds.y+12} fill={category.color}>{category.name}</text></g>:null;})}
             {renderedInk.map((stroke,index)=><polyline key={index} className={isActive&&selection.includes(index)?'selected-stroke':''} points={stroke.points.map((sample)=>`${sample.x},${sample.y}`).join(' ')} fill="none" stroke={stroke.color} strokeWidth={stroke.width} strokeLinecap="round" strokeLinejoin="round" opacity={stroke.width>10?.45:1}/>)}
             {isActive&&lasso.length>1&&<polyline className="lasso-path" points={lasso.map((sample)=>`${sample.x},${sample.y}`).join(' ')} fill="rgba(92,126,112,.06)"/>}
@@ -325,6 +390,8 @@ export default function Home() {
     </div>
     {tagOpen && <div className="compile-overlay" role="dialog" aria-modal="true" aria-label="Add to category"><div className="compile-dialog category-dialog"><div className="compile-dialog-icon"><Tag /></div><h2>Add selection to a category</h2><p>The selected ink will keep its exact handwriting when compiled.</p><div className="category-grid">{categories.map((category)=><button key={category.id} onClick={()=>tagSelection(category.id)}><span style={{background:category.color}} />{category.name}</button>)}</div><div className="new-category"><input value={newCategoryName} onChange={(event)=>setNewCategoryName(event.target.value)} onKeyDown={(event)=>{if(event.key==='Enter')addCategory();}} placeholder="Create your own category" autoFocus/><button onClick={addCategory} disabled={!newCategoryName.trim()}><Plus />Create</button></div><div className="compile-actions"><button onClick={()=>setTagOpen(false)}>Cancel</button></div></div></div>}
     {compileOpen && <div className="compile-overlay" role="dialog" aria-modal="true" aria-label="Compile category"><div className="compile-dialog category-dialog"><div className="compile-dialog-icon"><Sparkles /></div><h2>Compile a category</h2><p>Each sheet uses the exact pen strokes you added to that category.</p><div className="category-grid compile-category-grid">{categories.map((category)=>{const count=taggedBlocks.filter((block)=>block.notebookId===activeNotebookId&&block.categoryId===category.id).length;return <button key={category.id} disabled={!count} onClick={()=>compileTaggedCategory(category.id)}><span style={{background:category.color}} />{category.name}<small>{count} selection{count===1?'':'s'}</small></button>;})}</div><div className="compile-actions"><button onClick={()=>setCompileOpen(false)}>Cancel</button></div></div></div>}
+    <PhotoImport open={photoOpen} onClose={()=>setPhotoOpen(false)} onInsert={insertPhotoNotes} />
+    {saveError && <div className="storage-error" role="alert">Device storage is full. Keep this tab open and remove unneeded source-photo pages before closing.</div>}
     {notice && <div className="toast-notice" role="status">{notice}</div>}
   </main>;
 }

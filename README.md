@@ -38,7 +38,17 @@ pnpm build
 
 ## Current scope
 
-Notes are stored in the current browser. Accounts, cloud synchronization, and image-to-editable-note conversion are planned for later milestones.
+Notes are stored in the current browser. Accounts and cloud synchronization remain future work.
+
+## Photo to editable notes
+
+In the local preview, choose **Image**, upload a JPG/PNG/WebP (or paste an image into the dialog), and select **Convert to editable notes**. Review the transcription before adding it. Each line becomes a handwriting-font text object; use Select to edit, Eraser to remove a line, or Lasso to move a group. Long results continue across new pages. The resized source photo is retained on a separate page with a source link.
+
+Copy `.env.example` to `.env.local` and privately set `OPENAI_API_KEY`. Recognition sends the selected image to OpenAI and uses separately billed API credits. The server uses `store: false`. Recognition may misread handwriting or equations; diagrams are not converted into drawing objects. Imported text is not yet supported by the ink-only category compiler.
+
+Hosted recognition fails closed unless `OCR_OWNER_EMAIL` matches the trusted Sites authenticated-user email. Set that value and `OPENAI_API_KEY` as hosted runtime settings (the API key must be a secret), then deploy. Anonymous visitors cannot convert photos. The development-only bypass is compiled out of production. A GitHub checkout does not contain these credentials.
+
+Images and notes use device-local storage. If storage fills, Scribbly shows an explicit warning; remove unneeded source-photo pages before closing. The public deployment may lag behind this branch while owner access is being configured.
 
 ## License
 
