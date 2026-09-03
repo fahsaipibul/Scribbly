@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import {
   ChevronDown, CircleUserRound, Eraser, Folder, FolderOpen, Grid2X2,
   Highlighter, ImagePlus, LassoSelect, Menu, MousePointer2, PenLine,
-  Plus, Redo2, Search, Sparkles, Trash2, Type, Undo2,
+  Plus, Redo2, Search, Sparkles, Tag, Trash2, Type, Undo2,
 } from 'lucide-react';
 import { createCompiledInk, writeInk, type CompilationSection } from '@/lib/handwriting';
 
@@ -14,6 +14,14 @@ type TextBox = { id: number; x: number; y: number; text: string };
 type NotePage = { id: number; label: string; tone: string; compiled?: boolean };
 type Notebook = { id: number; name: string; color: string; folder: string; pages: NotePage[] };
 type Bounds = { x: number; y: number; width: number; height: number };
+type Category = { id: string; name: string; color: string };
+type TaggedBlock = { id: number; notebookId: number; pageId: number; pageLabel: string; categoryId: string; bounds: Bounds; strokes: Stroke[] };
+
+const starterCategories: Category[] = [
+  { id:'formula', name:'Formula', color:'#d76552' },
+  { id:'example', name:'Example', color:'#5686b0' },
+  { id:'definition', name:'Definition', color:'#5d9079' },
+];
 
 const starterNotebooks: Notebook[] = [
   { id: 1, name: 'Calculus I', color: 'coral', folder: 'School', pages: [
@@ -47,11 +55,16 @@ export default function Home() {
   const [dragOrigin, setDragOrigin] = useState<Point | null>(null);
   const [notice, setNotice] = useState('');
   const [compileOpen, setCompileOpen] = useState(false);
+  const [tagOpen, setTagOpen] = useState(false);
   const [compileKind, setCompileKind] = useState('formulas');
   const [compileRequest, setCompileRequest] = useState('');
   const [compileBusy, setCompileBusy] = useState(false);
   const [compileError, setCompileError] = useState('');
   const [compiledSources, setCompiledSources] = useState<Record<number, Array<{ pageId:number; label:string }>>>({});
+  const [categories, setCategories] = useState<Category[]>(starterCategories);
+  const [taggedBlocks, setTaggedBlocks] = useState<TaggedBlock[]>([]);
+  const [newCategoryName, setNewCategoryName] = useState('');
+  const [hydrated, setHydrated] = useState(false);
 
   const activeNotebook = notebooks.find((book) => book.id === activeNotebookId) ?? notebooks[0];
   const pages = activeNotebook?.pages ?? [];
@@ -62,7 +75,7 @@ export default function Home() {
     try {
       const saved = localStorage.getItem('scribbly-workspace-v3');
       if (!saved) return;
-      const data = JSON.parse(saved) as { notebooks?: Notebook[]; strokes?: Record<number, Stroke[]>; text?: Record<number, TextBox[]>; sources?: Record<number, Array<{ pageId:number; label:string }>>; handwritingVersion?: number };
+      const data = JSON.parse(saved) as { notebooks?: Notebook[]; strokes?: Record<number, Stroke[]>; text?: Record<number, TextBox[]>; sources?: Record<number, Array<{ pageId:number; label:string }>>; categories?:Category[]; taggedBlocks?:TaggedBlock[]; handwritingVersion?: number };
       if (data.notebooks?.length) setNotebooks(data.notebooks);
       if (data.strokes) {
         const migrated = { ...data.strokes };
@@ -71,12 +84,16 @@ export default function Home() {
       }
       if (data.text) setTextByPage(data.text);
       if (data.sources) setCompiledSources(data.sources);
+      if (data.categories?.length) setCategories(data.categories);
+      if (data.taggedBlocks) setTaggedBlocks(data.taggedBlocks);
     } catch { /* keep starter workspace */ }
+    finally { setHydrated(true); }
   }, []);
 
   useEffect(() => {
-    localStorage.setItem('scribbly-workspace-v3', JSON.stringify({ notebooks, strokes: strokesByPage, text: textByPage, sources: compiledSources, handwritingVersion:2 }));
-  }, [notebooks, strokesByPage, textByPage, compiledSources]);
+    if (!hydrated) return;
+    localStorage.setItem('scribbly-workspace-v3', JSON.stringify({ notebooks, strokes: strokesByPage, text: textByPage, sources: compiledSources, categories, taggedBlocks, handwritingVersion:2 }));
+  }, [hydrated, notebooks, strokesByPage, textByPage, compiledSources, categories, taggedBlocks]);
 
   useEffect(() => {
     const context = (document as Document & { modelContext?: { registerTool: (tool: object, options?: { signal?: AbortSignal }) => void | Promise<void> } }).modelContext;
@@ -84,10 +101,10 @@ export default function Home() {
     const lifecycle = new AbortController();
     void Promise.resolve(context.registerTool({
       name: 'compile_formula_sheet', title: 'Compile formula sheet',
-      description: 'Create or open an editable demo formula sheet inside the current Scribbly notebook.',
+      description: 'Compile every ink block tagged Formula into an editable sheet.',
       inputSchema: { type: 'object', properties: {}, additionalProperties: false },
       annotations: { readOnlyHint: false, untrustedContentHint: false },
-      execute: async () => { await runCompilation('Compile all formulas in this notebook'); return { status: 'created', notebook: activeNotebook.name, page: 'Formula sheet' }; },
+      execute: async () => { compileTaggedCategory('formula'); return { status: 'created', notebook: activeNotebook.name, page: 'Formula sheet' }; },
     }, { signal: lifecycle.signal })).catch(() => {});
     return () => lifecycle.abort();
   }, [notebooks, activeNotebookId]);
@@ -210,6 +227,47 @@ export default function Home() {
     if (pages.length === 1) { showNotice('A notebook needs at least one page'); return; }
     const page = pages.find((item) => item.id === id); if (!page || !window.confirm(`Delete “${page.label}”?`)) return;
     const next = pages.filter((item) => item.id !== id); updatePages(() => next); if (activeId === id) setActiveId(next[0].id); showNotice('Page deleted');
+  }
+
+  function addCategory() {
+    const name = newCategoryName.trim();
+    if (!name) return;
+    const palette = ['#9b6fb0','#d59a45','#4f9aa0','#bf6d91','#7774b8'];
+    const category = { id:`custom-${Date.now()}`, name, color:palette[(categories.length-3)%palette.length] };
+    setCategories((current)=>[...current,category]); setNewCategoryName('');
+    if (selection.length) tagSelection(category.id);
+  }
+
+  function tagSelection(categoryId: string) {
+    if (!selection.length || !selectionBounds || !activePage) return;
+    const selectedStrokes = strokes.filter((_,index)=>selection.includes(index)).map((stroke)=>({ ...stroke, points:stroke.points.map((sample)=>({...sample})) }));
+    setTaggedBlocks((current)=>[...current,{ id:Date.now(), notebookId:activeNotebookId, pageId:activeId, pageLabel:activePage.label, categoryId, bounds:selectionBounds, strokes:selectedStrokes }]);
+    const category = categories.find((item)=>item.id===categoryId);
+    setTagOpen(false); setSelection([]); setSelectionBounds(null); setTool('pen'); showNotice(`Added to ${category?.name ?? 'category'}`);
+  }
+
+  function compileTaggedCategory(categoryId: string) {
+    const category = categories.find((item)=>item.id===categoryId);
+    const blocks = taggedBlocks.filter((block)=>block.notebookId===activeNotebookId && block.categoryId===categoryId);
+    if (!category || !blocks.length) { showNotice(`No ${category?.name ?? 'category'} selections yet`); return; }
+    const id = Date.now();
+    const output: Stroke[] = [...writeInk(`${category.name} sheet`,62,64,3.8,'#24322f',2.7,620)];
+    let cursorY = 145;
+    for (const block of blocks) {
+      const points = block.strokes.flatMap((stroke)=>stroke.points);
+      if (!points.length) continue;
+      const sourceBounds = boundsFor(points);
+      const scale = Math.min(.92,680/Math.max(sourceBounds.width,1),190/Math.max(sourceBounds.height,1));
+      output.push({ points:[{x:55,y:cursorY+7},{x:56,y:cursorY+7}], color:category.color, width:10 });
+      block.strokes.forEach((stroke)=>output.push({ ...stroke, width:Math.max(1,stroke.width*scale), points:stroke.points.map((sample)=>({ x:76+(sample.x-sourceBounds.x)*scale, y:cursorY+(sample.y-sourceBounds.y)*scale })) }));
+      cursorY += Math.max(52,sourceBounds.height*scale)+34;
+      if (cursorY>990) break;
+    }
+    updatePages((current)=>[...current,{id,label:`${category.name} sheet`,tone:'formula',compiled:true}]);
+    setStrokesByPage((current)=>({...current,[id]:output}));
+    const uniqueSources = blocks.filter((block,index,list)=>list.findIndex((item)=>item.pageId===block.pageId)===index).map((block)=>({pageId:block.pageId,label:block.pageLabel}));
+    setCompiledSources((current)=>({...current,[id]:uniqueSources}));
+    setActiveId(id); setTool('pen'); setView('notebook'); setCompileOpen(false); showNotice(`${category.name} sheet created`);
   }
 
   function pageSnapshot(pageId: number, label: string) {
@@ -345,24 +403,29 @@ export default function Home() {
         <div className="toolbar" role="toolbar" aria-label="Note tools">
           <ToolButton label="Select" active={tool === 'select'} onClick={() => setTool('select')}><MousePointer2 /></ToolButton>
           <ToolButton label="Lasso" active={tool === 'lasso'} onClick={() => { setTool('lasso'); setSelection([]); setSelectionBounds(null); }}><LassoSelect /></ToolButton>
+          {selection.length > 0 && <button className="tag-selection" onClick={()=>setTagOpen(true)}><Tag />Add to category</button>}
           {selection.length > 0 && <button className="delete-selection" onClick={deleteSelection}><Trash2 />Delete selection</button>}
           <span className="tool-divider" />
           <ToolButton label="Pen" active={tool === 'pen'} onClick={() => setTool('pen')}><PenLine /></ToolButton><ToolButton label="Highlight" active={tool === 'highlighter'} onClick={() => setTool('highlighter')}><Highlighter /></ToolButton><ToolButton label="Eraser" active={tool === 'eraser'} onClick={() => setTool('eraser')}><Eraser /></ToolButton><ToolButton label="Text" active={tool === 'text'} onClick={() => setTool('text')}><Type /></ToolButton><ToolButton label="Image" active={false} onClick={() => {}}><ImagePlus /></ToolButton>
           <span className="tool-divider" /><button className="color-dot" aria-label="Ink color" /><button className="weight-button" aria-label="Pen size"><span /></button><span className="toolbar-spacer" />
-          <button className="icon-button compact" aria-label="Undo" onClick={undo}><Undo2 /></button><button className="icon-button compact" aria-label="Redo" disabled><Redo2 /></button><button className="compile-button" onClick={() => { setCompileError(''); setCompileOpen(true); }}><Sparkles />Compile <span>AI</span></button>
+          <button className="icon-button compact" aria-label="Undo" onClick={undo}><Undo2 /></button><button className="icon-button compact" aria-label="Redo" disabled><Redo2 /></button><button className="compile-button" onClick={() => setCompileOpen(true)}><Sparkles />Compile <span>Categories</span></button>
         </div>
         <div className="desk"><article ref={paperRef} className={`paper squared-paper paper-tool-${tool}`} onClick={addText}>
           {!activePage?.compiled && <div className="paper-content"><p className="hand date">September 2</p><h2 className="hand editable-paper-title" contentEditable suppressContentEditableWarning onBlur={(event) => finishRename(event.currentTarget.textContent ?? '')}>{activePage?.label}</h2><div className="hand underline" />{activeId === 1 ? <><p className="hand note">A limit describes the value a function approaches<br />as the input gets closer to some value.</p><div className="formula-card hand"><span className="formula-label">Definition</span><strong>lim&nbsp; f(x) = L</strong><small>x → a</small></div><p className="hand ex"><b>EX</b>&nbsp;&nbsp; Find the limit:</p><p className="hand equation">lim&nbsp; (x² − 4) / (x − 2) = 4</p></> : <p className="hand empty-hint">Pick up the pen and make this page yours.</p>}</div>}
           {activePage?.compiled && compiledSources[activeId]?.length > 0 && <button className="source-chip" onClick={() => openNotebook(activeNotebookId, compiledSources[activeId][0].pageId)}>↗ Go to original: {compiledSources[activeId][0].label}</button>}
           {(textByPage[activeId] ?? []).map((item) => <div key={item.id} className="canvas-text" style={{ left:item.x, top:item.y }} contentEditable suppressContentEditableWarning onPointerDown={(event) => event.stopPropagation()} onClick={(event) => event.stopPropagation()} onBlur={(event) => editText(item.id, event.currentTarget.textContent ?? '')}>{item.text}</div>)}
           <svg ref={svgRef} className={`ink-layer tool-${tool}`} onPointerDown={startStroke} onPointerMove={moveStroke} onPointerUp={endStroke} onPointerCancel={endStroke}>
+            {taggedBlocks.filter((block)=>block.pageId===activeId).map((block)=>{ const category=categories.find((item)=>item.id===block.categoryId); return category?<g className="category-marker" key={block.id}><circle cx={Math.max(14,block.bounds.x-12)} cy={block.bounds.y+8} r="6" fill={category.color}/><text x={Math.max(25,block.bounds.x)} y={block.bounds.y+12} fill={category.color}>{category.name}</text></g>:null; })}
             {allStrokes.map((stroke,index) => <polyline key={index} className={selection.includes(index) ? 'selected-stroke' : ''} points={stroke.points.map((p)=>`${p.x},${p.y}`).join(' ')} fill="none" stroke={stroke.color} strokeWidth={stroke.width} strokeLinecap="round" strokeLinejoin="round" opacity={stroke.width>10?.45:1} />)}
             {lasso.length > 1 && <polyline className="lasso-path" points={lasso.map((p)=>`${p.x},${p.y}`).join(' ')} fill="rgba(92,126,112,.06)" />}
             {selectionBounds && <rect className="selection-box" x={selectionBounds.x} y={selectionBounds.y} width={selectionBounds.width} height={selectionBounds.height} rx="8" />}
           </svg>
         </article></div>
       </section>}
-    </div>{compileOpen && <div className="compile-overlay" role="dialog" aria-modal="true" aria-label="Compile notebook"><div className="compile-dialog"><div className="compile-dialog-icon"><Sparkles /></div><h2>What would you like to compile?</h2><p>Scribbly will read your notes and create a new page using native, erasable pen strokes.</p><div className="compile-options">{['formulas','examples','definitions','custom'].map((kind)=><button disabled={compileBusy} key={kind} className={compileKind===kind?'active':''} onClick={()=>setCompileKind(kind)}>{kind}</button>)}</div>{compileKind==='custom'&&<textarea disabled={compileBusy} value={compileRequest} onChange={(event)=>setCompileRequest(event.target.value)} placeholder="e.g. Formulas with one example beneath each" autoFocus />}{compileError&&<p className="compile-error" role="alert">{compileError}</p>}<div className="compile-actions"><button disabled={compileBusy} onClick={()=>setCompileOpen(false)}>Cancel</button><button disabled={compileBusy || (compileKind==='custom'&&!compileRequest.trim())} className="create-compilation" onClick={()=>runCompilation(compileKind==='custom'?compileRequest:`Compile all ${compileKind} in this notebook`)}><Sparkles />{compileBusy?'Reading your notes…':'Create handwritten sheet'}</button></div></div></div>}{notice && <div className="toast-notice" role="status">{notice}</div>}
+    </div>
+    {tagOpen && <div className="compile-overlay" role="dialog" aria-modal="true" aria-label="Add to category"><div className="compile-dialog category-dialog"><div className="compile-dialog-icon"><Tag /></div><h2>Add selection to a category</h2><p>The selected ink will keep its exact handwriting when compiled.</p><div className="category-grid">{categories.map((category)=><button key={category.id} onClick={()=>tagSelection(category.id)}><span style={{background:category.color}} />{category.name}</button>)}</div><div className="new-category"><input value={newCategoryName} onChange={(event)=>setNewCategoryName(event.target.value)} onKeyDown={(event)=>{if(event.key==='Enter')addCategory();}} placeholder="Create your own category" autoFocus/><button onClick={addCategory} disabled={!newCategoryName.trim()}><Plus />Create</button></div><div className="compile-actions"><button onClick={()=>setTagOpen(false)}>Cancel</button></div></div></div>}
+    {compileOpen && <div className="compile-overlay" role="dialog" aria-modal="true" aria-label="Compile category"><div className="compile-dialog category-dialog"><div className="compile-dialog-icon"><Sparkles /></div><h2>Compile a category</h2><p>Each sheet uses the exact pen strokes you added to that category.</p><div className="category-grid compile-category-grid">{categories.map((category)=>{const count=taggedBlocks.filter((block)=>block.notebookId===activeNotebookId&&block.categoryId===category.id).length;return <button key={category.id} disabled={!count} onClick={()=>compileTaggedCategory(category.id)}><span style={{background:category.color}} />{category.name}<small>{count} selection{count===1?'':'s'}</small></button>;})}</div><div className="compile-actions"><button onClick={()=>setCompileOpen(false)}>Cancel</button></div></div></div>}
+    {notice && <div className="toast-notice" role="status">{notice}</div>}
   </main>;
 }
 

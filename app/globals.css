@@ -33,3 +33,21 @@ button:focus-visible { outline:3px solid rgba(73,97,88,.24); outline-offset:2px;
 @media (max-width:680px) { .topbar { grid-template-columns:1fr auto; }.notebook-title { display:none; }.workspace { grid-template-columns:1fr; }.page-sidebar { display:none; }.brand-name { font-size:20px; }.tool-button span { display:none; }.tool-button { min-width:34px; height:34px; padding:4px; }.toolbar { overflow-x:auto; }.paper { min-width:620px; }.desk { padding:18px; }.editor-header { padding:14px 16px; }.formula-grid { grid-template-columns:1fr; } }
 .compile-error { margin:14px 0 0 !important; padding:10px 12px; border-radius:9px; background:#fff0ed; color:#a94737 !important; font-size:11px !important; }
 .compile-actions button:disabled, .compile-options button:disabled, .compile-dialog textarea:disabled { cursor:wait; opacity:.58; }
+.tag-selection { display:flex; align-items:center; gap:6px; height:34px; padding:0 10px; border:1px solid #a9bdb3; border-radius:9px; background:#edf5ef; color:#38584b; font-size:10px; font-weight:700; white-space:nowrap; }
+.tag-selection svg { width:14px; }
+.category-marker { pointer-events:none; }
+.category-marker text { font:700 10px Arial,sans-serif; paint-order:stroke; stroke:#fffef9; stroke-width:3px; }
+.category-dialog { width:min(540px,100%); }
+.category-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; }
+.category-grid button { display:flex; align-items:center; gap:9px; min-height:44px; padding:9px 12px; border:1px solid #d9e0db; border-radius:11px; background:#fff; color:#33443d; font-size:12px; text-align:left; }
+.category-grid button:hover:not(:disabled) { border-color:#91aa9e; background:#f5f9f6; }
+.category-grid button:disabled { opacity:.42; }
+.category-grid button>span { width:10px; height:10px; flex:0 0 auto; border-radius:50%; }
+.category-grid button small { margin-left:auto; color:#8a948e; font-size:9px; }
+.new-category { display:flex; gap:8px; margin-top:12px; }
+.new-category input { flex:1; min-width:0; height:40px; padding:0 11px; border:1px solid #d8ddd8; border-radius:10px; outline:none; font-size:11px; }
+.new-category input:focus { border-color:#7f9b8e; box-shadow:0 0 0 3px rgba(127,155,142,.14); }
+.new-category button { display:flex; align-items:center; gap:5px; height:40px; padding:0 12px; border:0; border-radius:10px; background:#547566; color:#fff; font-size:10px; font-weight:700; }
+.new-category button:disabled { opacity:.45; }
+.new-category svg { width:13px; }
+@media (max-width:700px) { .category-grid { grid-template-columns:1fr; } .tag-selection { padding:0 7px; } }
