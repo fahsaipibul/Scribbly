@@ -12,9 +12,9 @@ Your next formula sheet is already somewhere in your notebook.
 
 1. **Lasso** the handwriting you want to keep.
 2. **Categorize** it: formulas, examples, definitions, or something entirely your own.
-3. **Compile** your category into a fresh sheet.
+3. **Compile** your category into its own sheet.
 
-Same handwriting. Same pen strokes. Just gathered in one place. Move it, erase it, write around it, or use **Go to original** to jump back to its source.
+Same handwriting. Same pen strokes. Just gathered in one place. New selections append to the existing category sheet without wiping your edits. Move it, erase it, write around it, or use **Go to original** to jump back to its source.
 
 You choose what belongs together—no AI guessing required.
 

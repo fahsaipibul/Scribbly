@@ -13,7 +13,7 @@ import { createCompiledInk } from '@/lib/handwriting';
 type Point = { x: number; y: number };
 type Stroke = { points: Point[]; color: string; width: number };
 type TextBox = { id: number; x: number; y: number; text: string };
-type NotePage = { id: number; label: string; tone: string; compiled?: boolean; sourceImage?: string; guide?: boolean };
+type NotePage = { id: number; label: string; tone: string; compiled?: boolean; compiledCategoryId?: string; compiledBlockIds?: number[]; sourceImage?: string; guide?: boolean };
 type Notebook = { id: number; name: string; color: string; folder: string; pages: NotePage[] };
 type Bounds = { x: number; y: number; width: number; height: number };
 type Category = { id: string; name: string; color: string };
@@ -89,6 +89,17 @@ export default function Home() {
           data.notebooks[0]={...data.notebooks[0],pages:[{id,label:'Welcome to Scribbly',tone:'peach',guide:true},...data.notebooks[0].pages]};
         }
       }
+      // Older versions created category sheets without remembering which tagged
+      // blocks they contained. Adopt those sheets so future compiles append only
+      // genuinely new selections instead of duplicating their existing ink.
+      if (data.notebooks?.length && data.taggedBlocks?.length) {
+        data.notebooks = data.notebooks.map((book)=>({...book,pages:book.pages.map((page)=>{
+          if (!page.compiled || page.compiledCategoryId || page.sourceImage) return page;
+          const category = (data.categories ?? starterCategories).find((item)=>page.label===`${item.name} sheet` || page.label===`${item.name} sheet (continued)`);
+          if (!category) return page;
+          return {...page,compiledCategoryId:category.id,compiledBlockIds:data.taggedBlocks!.filter((block)=>block.notebookId===book.id&&block.categoryId===category.id).map((block)=>block.id)};
+        })}));
+      }
       const landingBook=data.notebooks?.find(book=>book.pages.some(page=>page.guide))??data.notebooks?.[0];
       if(landingBook){setActiveNotebookId(landingBook.id);setActiveId((landingBook.pages.find(page=>page.guide)??landingBook.pages[0]).id);}
       const allPages=data.notebooks?.flatMap(book=>book.pages)??[];
@@ -135,7 +146,7 @@ export default function Home() {
       description: 'Compile every ink block tagged Formula into an editable sheet.',
       inputSchema: { type: 'object', properties: {}, additionalProperties: false },
       annotations: { readOnlyHint: false, untrustedContentHint: false },
-      execute: async () => { compileTaggedCategory('formula'); return { status: 'created', notebook: activeNotebook.name, page: 'Formula sheet' }; },
+      execute: async () => { compileTaggedCategory('formula'); return { status: 'updated', notebook: activeNotebook.name, page: 'Formula sheet' }; },
     }, { signal: lifecycle.signal })).catch(() => {});
     return () => lifecycle.abort();
   }, [notebooks, activeNotebookId]);
@@ -368,24 +379,50 @@ export default function Home() {
     const category = categories.find((item)=>item.id===categoryId);
     const blocks = taggedBlocks.filter((block)=>block.notebookId===activeNotebookId && block.categoryId===categoryId);
     if (!category || !blocks.length) { showNotice(`No ${category?.name ?? 'category'} selections yet`); return; }
-    const id = Date.now();
-    const output: Stroke[] = [];
-    let cursorY = 145;
-    for (const block of blocks) {
+    const existingPages = pages.filter((page)=>page.compiledCategoryId===categoryId || (!page.sourceImage && (page.label===`${category.name} sheet` || page.label===`${category.name} sheet (continued)`)));
+    const compiledIds = new Set(existingPages.flatMap((page)=>page.compiledBlockIds ?? []));
+    const newBlocks = existingPages.length ? blocks.filter((block)=>!compiledIds.has(block.id)) : blocks;
+    if (existingPages.length && !newBlocks.length) {
+      setActiveId(existingPages[0].id); setTool('pen'); setView('notebook'); setCompileOpen(false); showNotice(`${category.name} sheet is already up to date`); return;
+    }
+
+    let nextId = Date.now();
+    let currentPage = existingPages.at(-1);
+    const createdPages: NotePage[] = [];
+    const inkToAppend: Record<number, Stroke[]> = {};
+    const blockIdsToAppend: Record<number, number[]> = {};
+    const sourcesToAppend: Record<number, Array<{pageId:number;label:string}>> = {};
+    if (!currentPage) {
+      currentPage={id:nextId++,label:`${category.name} sheet`,tone:'formula',compiled:true,compiledCategoryId:categoryId,compiledBlockIds:[]};
+      createdPages.push(currentPage);
+    }
+    const pageBottom = (pageId:number) => Math.max(111,...(strokesByPage[pageId]??[]).flatMap((stroke)=>stroke.points.map((sample)=>sample.y)),...(inkToAppend[pageId]??[]).flatMap((stroke)=>stroke.points.map((sample)=>sample.y)));
+    let cursorY = Math.max(145,pageBottom(currentPage.id)+34);
+
+    for (const block of newBlocks) {
       const points = block.strokes.flatMap((stroke)=>stroke.points);
       if (!points.length) continue;
       const sourceBounds = boundsFor(points);
       const scale = Math.min(.92,680/Math.max(sourceBounds.width,1),190/Math.max(sourceBounds.height,1));
-      output.push({ points:[{x:55,y:cursorY+7},{x:56,y:cursorY+7}], color:category.color, width:10 });
-      block.strokes.forEach((stroke)=>output.push({ ...stroke, width:Math.max(1,stroke.width*scale), points:stroke.points.map((sample)=>({ x:76+(sample.x-sourceBounds.x)*scale, y:cursorY+(sample.y-sourceBounds.y)*scale })) }));
-      cursorY += Math.max(52,sourceBounds.height*scale)+34;
-      if (cursorY>990) break;
+      const blockHeight = Math.max(52,sourceBounds.height*scale)+34;
+      if (cursorY+blockHeight>990) {
+        currentPage={id:nextId++,label:`${category.name} sheet (continued)`,tone:'formula',compiled:true,compiledCategoryId:categoryId,compiledBlockIds:[]};
+        createdPages.push(currentPage); cursorY=145;
+      }
+      const pageId=currentPage.id;
+      inkToAppend[pageId]=inkToAppend[pageId]??[];
+      inkToAppend[pageId].push({ points:[{x:55,y:cursorY+7},{x:56,y:cursorY+7}], color:category.color, width:10 });
+      block.strokes.forEach((stroke)=>inkToAppend[pageId].push({ ...stroke, width:Math.max(1,stroke.width*scale), points:stroke.points.map((sample)=>({ x:76+(sample.x-sourceBounds.x)*scale, y:cursorY+(sample.y-sourceBounds.y)*scale })) }));
+      blockIdsToAppend[pageId]=[...(blockIdsToAppend[pageId]??[]),block.id];
+      sourcesToAppend[pageId]=[...(sourcesToAppend[pageId]??[]),{pageId:block.pageId,label:block.pageLabel}];
+      cursorY += blockHeight;
     }
-    updatePages((current)=>[...current,{id,label:`${category.name} sheet`,tone:'formula',compiled:true}]);
-    setStrokesByPage((current)=>({...current,[id]:output}));
-    const uniqueSources = blocks.filter((block,index,list)=>list.findIndex((item)=>item.pageId===block.pageId)===index).map((block)=>({pageId:block.pageId,label:block.pageLabel}));
-    setCompiledSources((current)=>({...current,[id]:uniqueSources}));
-    setActiveId(id); setTool('pen'); setView('notebook'); setCompileOpen(false); showNotice(`${category.name} sheet created`);
+    updatePages((current)=>[...current.map((page)=>existingPages.some((item)=>item.id===page.id)?{...page,compiledCategoryId:categoryId,compiledBlockIds:[...(page.compiledBlockIds??[]),...(blockIdsToAppend[page.id]??[])]}:page),...createdPages.map((page)=>({...page,compiledBlockIds:blockIdsToAppend[page.id]??[]}))]);
+    setStrokesByPage((current)=>({...current,...Object.fromEntries(Object.entries(inkToAppend).map(([pageId,ink])=>[pageId,[...(current[Number(pageId)]??[]),...ink]]))}));
+    setCompiledSources((current)=>({...current,...Object.fromEntries(Object.entries(sourcesToAppend).map(([pageId,sources])=>{const combined=[...(current[Number(pageId)]??[]),...sources];return [pageId,combined.filter((source,index,list)=>list.findIndex((item)=>item.pageId===source.pageId)===index)];}))}));
+    const targetPage=createdPages.at(-1)?.id??existingPages.at(-1)!.id;
+    setActiveId(targetPage); setTool('pen'); setView('notebook'); setCompileOpen(false); showNotice(`${category.name} sheet ${existingPages.length?'updated':'created'}`);
+    window.setTimeout(()=>document.getElementById(`paper-${targetPage}`)?.scrollIntoView({behavior:'smooth',block:'start'}),100);
   }
 
   return <main className="app-shell">
@@ -445,7 +482,7 @@ export default function Home() {
       </section>}
     </div>
     {tagOpen && <div className="compile-overlay" role="dialog" aria-modal="true" aria-label="Add to category"><div className="compile-dialog category-dialog"><div className="compile-dialog-icon"><Tag /></div><h2>Add selection to a category</h2><p>The selected ink will keep its exact handwriting when compiled.</p><div className="category-grid">{categories.map((category)=><button key={category.id} onClick={()=>tagSelection(category.id)}><span style={{background:category.color}} />{category.name}</button>)}</div><div className="new-category"><input value={newCategoryName} onChange={(event)=>setNewCategoryName(event.target.value)} onKeyDown={(event)=>{if(event.key==='Enter')addCategory();}} placeholder="Create your own category" autoFocus/><button onClick={addCategory} disabled={!newCategoryName.trim()}><Plus />Create</button></div><div className="compile-actions"><button onClick={()=>setTagOpen(false)}>Cancel</button></div></div></div>}
-    {compileOpen && <div className="compile-overlay" role="dialog" aria-modal="true" aria-label="Compile category"><div className="compile-dialog category-dialog"><div className="compile-dialog-icon"><Sparkles /></div><h2>Compile a category</h2><p>Each sheet uses the exact pen strokes you added to that category.</p><div className="category-grid compile-category-grid">{categories.map((category)=>{const count=taggedBlocks.filter((block)=>block.notebookId===activeNotebookId&&block.categoryId===category.id).length;return <button key={category.id} disabled={!count} onClick={()=>compileTaggedCategory(category.id)}><span style={{background:category.color}} />{category.name}<small>{count} selection{count===1?'':'s'}</small></button>;})}</div><div className="compile-actions"><button onClick={()=>setCompileOpen(false)}>Cancel</button></div></div></div>}
+    {compileOpen && <div className="compile-overlay" role="dialog" aria-modal="true" aria-label="Compile category"><div className="compile-dialog category-dialog"><div className="compile-dialog-icon"><Sparkles /></div><h2>Compile a category</h2><p>New selections are added to the category's existing sheet, keeping its current edits.</p><div className="category-grid compile-category-grid">{categories.map((category)=>{const count=taggedBlocks.filter((block)=>block.notebookId===activeNotebookId&&block.categoryId===category.id).length;return <button key={category.id} disabled={!count} onClick={()=>compileTaggedCategory(category.id)}><span style={{background:category.color}} />{category.name}<small>{count} selection{count===1?'':'s'}</small></button>;})}</div><div className="compile-actions"><button onClick={()=>setCompileOpen(false)}>Cancel</button></div></div></div>}
     <PhotoImport open={photoOpen} onClose={()=>setPhotoOpen(false)} onInsert={insertPhotoNotes} />
     {saveError && <div className="storage-error" role="alert">Device storage is full. Keep this tab open and remove unneeded source-photo pages before closing.</div>}
     {notice && <div className="toast-notice" role="status">{notice}</div>}
@@ -456,7 +493,7 @@ function WelcomeGuide() {
   return <div className="welcome-guide">
     <p className="welcome-intro">Your notebook, your handwriting.<br />Two ways to do more with your notes.</p>
     <ol>
-      <li><h3>Compile</h3><p>Turn scattered notes into a sheet of formulas, examples, definitions — or any category you create.</p><p>Lasso your writing → Add to category → Compile. Your original handwriting is copied onto a new sheet, with a link back to the source page.</p></li>
+      <li><h3>Compile</h3><p>Turn scattered notes into a sheet of formulas, examples, definitions — or any category you create.</p><p>Lasso your writing → Add to category → Compile. Your original handwriting is added to its category sheet, with a link back to the source page.</p></li>
       <li><h3>Photo → handwriting</h3><p>Bring a board photo, scanned page or screenshot into your notebook as handwriting-style ink.</p><p>Tap Image → choose your photo → Add handwriting to notebook. Erase parts, lasso and move it, or write over it. Your source photo stays available for checking.</p></li>
     </ol>
   </div>;
