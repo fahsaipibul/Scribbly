@@ -39,9 +39,9 @@ Made for writing with a stylus, with mouse and touch support too. Page titles st
 
 ## Try it out
 
-**[Open the earlier Scribbly demo →](https://scribbly-notes.fpibul.chatgpt.site)**
+**[Open the latest Scribbly app →](https://scribbly-notes.fpibul.chatgpt.site/)**
 
-The public demo is an older version. The latest photo-to-handwriting flow and welcome-page updates are in this repository and the local preview, not yet published to that demo.
+This is the current public version, including the welcome guide and Photo → Handwriting. Photo conversion is restricted to the signed-in owner to protect the project's API credits; everyone can use the notebook and compilation tools.
 
 ### Run the latest version locally
 
