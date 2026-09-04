@@ -13,8 +13,20 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
+  metadataBase: new URL('https://scribbly-notes.fpibul.chatgpt.site'),
   title: 'Scribbly — notes that think with you',
   description: 'A tactile notebook for writing, organizing, and compiling your notes.',
+  openGraph: {
+    title: 'Scribbly — notes that think with you',
+    description: 'Your handwriting. A little magic.',
+    images: [{ url: '/og.png', width: 1200, height: 630, alt: 'Scribbly handwriting notebook' }],
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title: 'Scribbly — notes that think with you',
+    description: 'Your handwriting. A little magic.',
+    images: ['/og.png'],
+  },
 };
 
 export default function RootLayout({
