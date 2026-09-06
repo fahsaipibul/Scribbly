@@ -6,6 +6,8 @@ For the formulas hiding between doodles, the examples scattered across lectures,
 
 Scribbly is a tablet-first notebook that lets you write freely, collect the good bits, and turn photos into ink you can actually work with.
 
+Live Demo: **(https://scribbly-notes.fpibul.chatgpt.site/)**
+
 ## 🪄 Compile — your notes, remixed
 
 Your next formula sheet is already somewhere in your notebook.
